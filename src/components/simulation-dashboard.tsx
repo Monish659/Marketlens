@@ -919,6 +919,68 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   };
 
   // Run sentiment analysis on selected users
+  const buildFallbackOpinions = (profiles: any[]) => {
+    return profiles.map((profile: any) => {
+      const persona = profile.user_metadata || profile;
+      const random = Math.random();
+
+      let attention: 'full' | 'partial' | 'ignore' = 'partial';
+      if (random > 0.72) attention = 'full';
+      else if (random < 0.34) attention = 'ignore';
+
+      const sentimentBase =
+        attention === 'full' ? 0.72 :
+        attention === 'partial' ? 0.52 : 0.28;
+
+      const sentiment = Math.max(0, Math.min(1, sentimentBase + (Math.random() - 0.5) * 0.18));
+
+      return {
+        personaId: persona.personaId,
+        attention,
+        sentiment,
+        reason:
+          attention === 'full'
+            ? `This feels directly relevant to ${persona.name || 'their needs'}.`
+            : attention === 'partial'
+              ? `${persona.name || 'They'} see potential, but want more clarity before committing.`
+              : `${persona.name || 'They'} do not see enough immediate value right now.`,
+        comment:
+          attention === 'ignore'
+            ? undefined
+            : attention === 'full'
+              ? 'I like the concept, but I want a clearer rollout plan.'
+              : 'Interesting idea. Show me the first practical use case.',
+        persona: profile
+      };
+    });
+  };
+
+  const generateOpinionsWithTimeout = async (profiles: any[]) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const response = await fetch('/api/generate-opinions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: postContent,
+          profiles
+        }),
+        signal: controller.signal
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success || !Array.isArray(data?.opinions)) {
+        throw new Error(data?.error || 'Failed to generate opinions');
+      }
+
+      return data.opinions;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
   const runAnalysis = async () => {
     if (selectedUsers.length === 0) {
       alert('Please select focus group first');
@@ -936,6 +998,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     setIsRunningAnalysis(true);
     setIsSimulating(true);
+    setProcessedPersonas(0);
     setReactions([]);
     setMetrics({
       score: 0,
@@ -949,29 +1012,23 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     try {
       console.log('🚀 [ANALYSIS] Running sentiment analysis on', selectedUsers.length, 'users');
-      
-      // Generate opinions for selected users
-      const opinionsResponse = await fetch('/api/generate-opinions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          idea: postContent, 
-          profiles: selectedUsers 
-        })
-      });
-      
-      const opinionsData = await opinionsResponse.json();
-      if (!opinionsData.success) {
-        throw new Error('Failed to generate opinions');
-      }
-      
-      console.log('✅ [ANALYSIS] Generated', opinionsData.opinions.length, 'opinions');
-      
+
+      const opinions = await generateOpinionsWithTimeout(selectedUsers);
+      console.log('✅ [ANALYSIS] Generated', opinions.length, 'opinions');
+
       // Run simulation with generated opinions
-      runGeneratedSimulation(opinionsData.opinions);
-      
+      runGeneratedSimulation(opinions);
     } catch (error) {
       console.error('💥 [ANALYSIS] Error:', error);
+
+      // Never leave users stuck in "Analyzing..." if backend is slow/unavailable.
+      const fallbackOpinions = buildFallbackOpinions(selectedUsers);
+      if (fallbackOpinions.length > 0) {
+        setCurrentProcessingStep('Backend slow, using fast local simulation...');
+        runGeneratedSimulation(fallbackOpinions);
+        return;
+      }
+
       alert(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsSimulating(false);
       setIsRunningAnalysis(false);
@@ -1191,6 +1248,8 @@ Improved idea:`,
 
     setIsGlobalDeployment(true);
     setIsRunningAnalysis(true);
+    setIsSimulating(true);
+    setProcessedPersonas(0);
     setReactions([]); // Clear previous reactions
     // Don't clear feedbackList in global mode
     setCurrentProcessingStep('Deploying globally...');
@@ -1241,29 +1300,25 @@ Improved idea:`,
       // Generate opinions for ALL users (global deployment)
       console.log('🌍 [GLOBAL] Running analysis on', allUsers.length, 'users globally');
       
-      const opinionsResponse = await fetch('/api/generate-opinions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          idea: postContent, 
-          profiles: allUsers  // Use ALL users for global deployment
-        })
-      });
-      
-      const opinionsData = await opinionsResponse.json();
-      if (!opinionsData.success) {
-        throw new Error('Failed to generate global opinions');
-      }
-      
-      console.log('✅ [GLOBAL] Generated', opinionsData.opinions.length, 'opinions globally');
-      
+      const opinions = await generateOpinionsWithTimeout(allUsers);
+      console.log('✅ [GLOBAL] Generated', opinions.length, 'opinions globally');
+
       // Run simulation with generated opinions
-      runGeneratedSimulation(opinionsData.opinions);
+      runGeneratedSimulation(opinions);
 
     } catch (error) {
       console.error('Error in global deployment:', error);
+
+      const fallbackOpinions = buildFallbackOpinions(allUsers);
+      if (fallbackOpinions.length > 0) {
+        setCurrentProcessingStep('Backend slow, switching to local global simulation...');
+        runGeneratedSimulation(fallbackOpinions);
+        return;
+      }
+
       alert('Failed to run global deployment. Please try again.');
       setIsRunningAnalysis(false);
+      setIsSimulating(false);
       setIsGlobalDeployment(false);
     }
   };
@@ -1759,6 +1814,13 @@ Improved idea:`,
     ? Math.round((metrics.partialAttention / metrics.totalResponses) * 100) : 0;
   const ignorePercent = metrics.totalResponses > 0 
     ? Math.round((metrics.ignored / metrics.totalResponses) * 100) : 0;
+  
+  const totalProcessingTarget = Math.max(
+    isGlobalDeployment
+      ? (selectedUsers.length || allUsers.length || personas.length)
+      : (selectedUsers.length || personas.length),
+    1
+  );
 
   const impactScore = Math.round((fullPercent * 2 + partialPercent) / 2);
 
@@ -2431,7 +2493,7 @@ Return only the improved idea, no additional commentary.`,
                     <div className="flex justify-between items-center">
                       <span className="text-white/70 text-xs font-mono">Personas Processed</span>
                       <span className="text-white font-mono text-sm">
-                        {processedPersonas} / {personas.length}
+                        {processedPersonas} / {totalProcessingTarget}
                       </span>
                     </div>
                     
@@ -2440,7 +2502,7 @@ Return only the improved idea, no additional commentary.`,
                         <div
                           key={i}
                           className={`w-1 h-2 transition-all duration-500 ${
-                            i < Math.floor((processedPersonas / personas.length) * 25) ? 'bg-white' : 'bg-white/20'
+                            i < Math.floor((processedPersonas / totalProcessingTarget) * 25) ? 'bg-white' : 'bg-white/20'
                           }`}
                           style={{
                             animationDelay: `${i * 20}ms`
@@ -2450,8 +2512,8 @@ Return only the improved idea, no additional commentary.`,
                     </div>
                     
                     <div className="flex justify-between items-center text-xs font-mono text-white/60">
-                      <span>Progress: {Math.round((processedPersonas / personas.length) * 100)}%</span>
-                      <span>ETA: {Math.max(0, Math.ceil((personas.length - processedPersonas) / 10))}s</span>
+                      <span>Progress: {Math.round((processedPersonas / totalProcessingTarget) * 100)}%</span>
+                      <span>ETA: {Math.max(0, Math.ceil((totalProcessingTarget - processedPersonas) / 10))}s</span>
                     </div>
                   </div>
                 </motion.div>

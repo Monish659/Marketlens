@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chatCompletion } from '@/lib/cohere';
 
+const MAX_AI_OPINIONS = 12;
+const AI_BATCH_SIZE = 6;
+const AI_TIMEOUT_MS = 3500;
+
 export async function POST(request: NextRequest) {
   console.log('🎯 [GENERATE-OPINIONS] API endpoint called');
   
@@ -23,29 +27,46 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('🎯 [GENERATE-OPINIONS] Processing', profiles.length, 'profiles for idea analysis');
-    
-    // Generate opinions for each profile using Cohere
-    const opinions = await Promise.all(profiles.map(async (profile: any, index: number) => {
-      console.log(`🎯 [GENERATE-OPINIONS] Processing profile ${index + 1}/${profiles.length}:`, {
-        name: profile.name,
-        title: profile.title,
-        personaId: profile.personaId
-      });
-      
-      try {
-        const opinion = await generateOpinionWithCohere(profile, idea);
-        console.log(`✅ [GENERATE-OPINIONS] Generated opinion for ${profile.name}:`, {
-        attention: opinion.attention,
-        sentiment: opinion.sentiment.toFixed(2),
-          hasComment: !!opinion.comment
-      });
-      return opinion;
-      } catch (error) {
-        console.error(`💥 [GENERATE-OPINIONS] Error generating opinion for ${profile.name}:`, error);
-        // Fallback to a neutral opinion if Cohere fails
-        return generateFallbackOpinion(profile, idea);
+
+    const hasCohereKey = !!process.env.COHERE_API_KEY;
+    const aiTargetCount = hasCohereKey ? Math.min(MAX_AI_OPINIONS, profiles.length) : 0;
+    const opinions: any[] = new Array(profiles.length);
+
+    if (aiTargetCount > 0) {
+      console.log(`🎯 [GENERATE-OPINIONS] Using Cohere for first ${aiTargetCount} profiles, fallback for remaining ${profiles.length - aiTargetCount}`);
+
+      for (let i = 0; i < aiTargetCount; i += AI_BATCH_SIZE) {
+        const batch = profiles.slice(i, Math.min(i + AI_BATCH_SIZE, aiTargetCount));
+        const batchOpinions = await Promise.all(
+          batch.map(async (profile: any) => {
+            try {
+              const opinion = await withTimeout(
+                generateOpinionWithCohere(profile, idea),
+                AI_TIMEOUT_MS,
+                `Cohere timeout for ${profile?.name || profile?.user_metadata?.name || 'persona'}`
+              );
+              return opinion;
+            } catch (error) {
+              console.warn(`⚠️ [GENERATE-OPINIONS] Falling back for ${profile?.name || profile?.user_metadata?.name || 'persona'}:`, error);
+              return generateFallbackOpinion(profile, idea);
+            }
+          })
+        );
+
+        batchOpinions.forEach((opinion, index) => {
+          opinions[i + index] = opinion;
+        });
       }
-    }));
+    } else {
+      console.warn('⚠️ [GENERATE-OPINIONS] COHERE_API_KEY missing or disabled, using fallback opinions only');
+    }
+
+    // Fill any missing entries (including profiles beyond AI sample limit) with fast fallback opinions.
+    for (let i = 0; i < profiles.length; i++) {
+      if (!opinions[i]) {
+        opinions[i] = generateFallbackOpinion(profiles[i], idea);
+      }
+    }
 
     console.log('✅ [GENERATE-OPINIONS] Successfully generated', opinions.length, 'opinions');
     
@@ -78,6 +99,20 @@ export async function POST(request: NextRequest) {
       error: 'Failed to generate opinions',
       details: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
