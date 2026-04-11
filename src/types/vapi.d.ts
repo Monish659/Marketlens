@@ -11,7 +11,7 @@ declare module '@vapi-ai/web' {
       language?: string;
     };
     voice?: {
-      provider: 'playht' | 'elevenlabs' | '11labs' | 'azure' | 'rime';
+      provider: 'playht' | 'elevenlabs' | '11labs' | 'azure' | 'rime' | 'openai' | 'vapi';
       voiceId: string;
     };
     model?: {
@@ -34,7 +34,7 @@ declare module '@vapi-ai/web' {
   export default class Vapi {
     constructor(publicKey: string);
     
-    start(config: VapiConfig): Promise<void>;
+    start(configOrAssistantId: VapiConfig | string): Promise<void>;
     stop(): void;
     setMuted(muted: boolean): void;
     
@@ -49,4 +49,3 @@ declare module '@vapi-ai/web' {
     off(event: string, handler?: (...args: any[]) => void): void;
   }
 }
-

@@ -150,6 +150,29 @@ Instructions:
 Remember: You've already formed your opinion. You're here to discuss it, not to be convinced otherwise (unless they address your specific concerns).`;
   };
 
+  const getAssistantIdForCall = async (params: {
+    name?: string;
+    firstMessage?: string;
+    systemPrompt?: string;
+  }) => {
+    const response = await fetch('/api/vapi/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.success || !data?.assistantId) {
+      throw new Error(
+        data?.error ||
+        data?.details?.message ||
+        'Failed to prepare Vapi assistant configuration'
+      );
+    }
+
+    return data.assistantId as string;
+  };
+
   const startCall = async () => {
     if (!vapiRef.current) {
       setError('Voice agent not initialized');
@@ -176,28 +199,20 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
       'Hello! How can I help you today?';
 
     try {
-      // Use the simple format that was working before
-      await vapiRef.current.start({
+      const assistantId = await getAssistantIdForCall({
         name: isPersonaMode && personaContext ? personaContext.persona.name : 'Assistant',
-        firstMessage: firstMessage,
-        model: {
-          provider: 'openai',
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: systemPrompt,
-            },
-          ],
-        },
-        voice: {
-          provider: 'playht',
-          voiceId: 'jennifer',
-        },
+        firstMessage,
+        systemPrompt,
       });
+
+      await vapiRef.current.start(assistantId as any);
     } catch (err: any) {
       console.error('Failed to start call:', err);
-      setError(err?.message || 'Failed to start call');
+      const message =
+        err?.error?.message ||
+        err?.message ||
+        'Failed to start call';
+      setError(`${message}. Check VAPI_PRIVATE_KEY/VAPI_ASSISTANT_ID and mic permissions.`);
       setIsConnecting(false);
       setConnectionStatus('error');
     }
