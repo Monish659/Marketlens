@@ -250,8 +250,48 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const isGeneratingFeedbackRef = useRef<boolean>(false); // Add this ref
   const isGeneratingImprovedPromptRef = useRef<boolean>(false); // Add this ref for improved prompt
+  const MIN_GLOBE_USERS = 25;
 
   const getPersonaData = (persona: any) => persona?.user_metadata || persona || {};
+  const getPersonaId = (persona: any, index = 0) => {
+    const data = getPersonaData(persona);
+    const rawId = data.personaId || persona?.personaId || persona?.user_id || persona?.id || `${data.email || persona?.email || 'user'}-${index}`;
+    const parsed = Number(rawId);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+
+    // Stable numeric fallback from string ids/emails.
+    const str = String(rawId);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    return Math.abs(hash) || index + 1;
+  };
+  const getPersonaCoordinates = (persona: any, index = 0) => {
+    const data = getPersonaData(persona);
+    const coords = data.location?.coordinates;
+
+    if (coords) {
+      if ('coordinates' in coords && Array.isArray(coords.coordinates)) {
+        const lon = Number(coords.coordinates[0]);
+        const lat = Number(coords.coordinates[1]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+      } else if (Array.isArray(coords)) {
+        const lon = Number(coords[0]);
+        const lat = Number(coords[1]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+      } else if ('latitude' in coords && 'longitude' in coords) {
+        const lat = Number((coords as any).latitude);
+        const lon = Number((coords as any).longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+      }
+    }
+
+    // Geographic fallback spread so globe always renders.
+    const row = Math.floor(index / 20);
+    const col = index % 20;
+    const lat = -55 + row * 5.5;
+    const lon = -170 + col * 18;
+    return { lat, lon };
+  };
   const getPersonaName = (persona: any) => {
     const data = getPersonaData(persona);
     return data.name || data.email?.split('@')[0] || 'User';
@@ -266,6 +306,97 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         : data.professional?.primaryIndustry) ||
       'Professional'
     );
+  };
+  const normalizeUserPool = (users: any[]) => {
+    return users.map((user, index) => {
+      const data = getPersonaData(user);
+      const personaId = getPersonaId(user, index);
+      const coords = getPersonaCoordinates(user, index);
+      const title = getPersonaTitle(user);
+      const name = getPersonaName(user);
+      const email = data.email || user.email || `${name.toLowerCase().replace(/\s+/g, '.')}@live.local`;
+
+      const normalizedPersona = {
+        ...data,
+        personaId,
+        name,
+        title,
+        email,
+        location: {
+          city: data.location?.city || 'San Francisco',
+          country: data.location?.country || 'United States',
+          coordinates: {
+            type: 'Point',
+            coordinates: [coords.lon, coords.lat] as [number, number],
+          },
+        },
+        demographics: data.demographics || {
+          generation: 'Millennial',
+          gender: 'Not specified',
+          ageRange: '25-35',
+        },
+        professional: data.professional || {
+          seniority: 'Mid-level',
+          primaryIndustry: 'Technology',
+          companySize: '50-200',
+        },
+        psychographics: data.psychographics || {
+          techAdoption: 5,
+          influenceScore: 5,
+        },
+        interests: Array.isArray(data.interests) ? data.interests : ['Technology', 'Business'],
+      };
+
+      return user.user_metadata
+        ? { ...user, ...normalizedPersona, user_metadata: normalizedPersona }
+        : normalizedPersona;
+    });
+  };
+  const mergeUserPools = (liveUsers: any[], fallbackUsers: any[]) => {
+    const seen = new Set<string>();
+    const merged: any[] = [];
+
+    for (const user of [...liveUsers, ...fallbackUsers]) {
+      const data = getPersonaData(user);
+      const key = `${data.personaId || user.user_id || user.id || ''}|${data.email || user.email || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(user);
+    }
+    return merged;
+  };
+  const buildGlobeDotsFromUsers = (
+    users: any[],
+    options?: { mode?: 'neutral' | 'niche' | 'global'; nicheIds?: number[] }
+  ) => {
+    const mode = options?.mode || 'neutral';
+    const nicheIds = new Set(options?.nicheIds || []);
+
+    return users.map((user, index) => {
+      const personaId = getPersonaId(user, index);
+      const coords = getPersonaCoordinates(user, index);
+
+      let color = '#666666';
+      let size = 4;
+
+      if (mode === 'global') {
+        color = '#ffffff';
+        size = 6;
+      } else if (mode === 'niche') {
+        const isInNiche = nicheIds.has(personaId);
+        color = isInNiche ? '#ffffff' : '#444444';
+        size = isInNiche ? 8 : 4;
+      }
+
+      return {
+        id: personaId,
+        lat: coords.lat,
+        lon: coords.lon,
+        color,
+        size,
+        persona: user,
+      };
+    });
   };
 
   // Load session from URL on mount and fetch initial data
@@ -285,15 +416,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       fetchProject();
     }
     
-    // Prefer live users first, then fall back to local personas.
-    const loadUsers = async () => {
-      const loadedLiveUsers = await loadRealAuth0Users();
-      if (!loadedLiveUsers) {
-        await loadLocalPersonas();
-      }
-    };
-
-    void loadUsers();
+    void hydrateGlobalUserPool();
   }, [projectId, sessionId]);
 
   // Restore session state
@@ -473,6 +596,15 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setGlobeDots([]);
       setPostContent('');
       setCurrentPost('');
+      setNichePersonaIds([]);
+      setNicheInfo(null);
+      setInsights(null);
+      setFeedbackList([]);
+      setHasEnteredPrompt(false);
+      setHasCompletedFirstAnalysis(false);
+      setIsGlobalDeployment(false);
+      setCurrentProcessingStep('');
+      setProcessedPersonas(0);
       
       // Set default simulation type to project-idea
       setSelectedType('project-idea');
@@ -530,49 +662,19 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     }
   };
 
-  // Convert all Auth0 users to globe dots (initially greyed out) - only run on initial load
+  // Convert all loaded users to neutral globe dots when not in niche/global simulation
   useEffect(() => {
-    // Only set initial dots if we don't have any dots yet and we're not in niche selection mode
-    if (allUsers.length > 0 && globeDots.length === 0 && nichePersonaIds.length === 0) {
-      console.log('🔍 [DEBUG] Initial globe dots setup for', allUsers.length, 'users');
-      
-      // Show all loaded users as grey dots initially.
-      const dots = allUsers.map(persona => {
-        // Handle both Auth0 user structure (with user_metadata) and direct persona structure
-        const personaData = persona.user_metadata || persona;
-        
-        if (!personaData.personaId || !personaData.location?.coordinates) {
-          console.warn('⚠️ [DEBUG] Invalid persona data:', persona);
-          return null;
-        }
-        
-        // Handle both possible coordinate structures
-        let lat: number, lon: number;
-        
-        if (Array.isArray(personaData.location.coordinates.coordinates)) {
-          // GeoJSON format: { type: string; coordinates: [longitude, latitude] }
-          lon = personaData.location.coordinates.coordinates[0];
-          lat = personaData.location.coordinates.coordinates[1];
-        } else {
-          // Object format: { latitude: number; longitude: number }
-          lat = (personaData.location.coordinates as any).latitude;
-          lon = (personaData.location.coordinates as any).longitude;
-        }
-        
-        return {
-          id: personaData.personaId,
-          lat: lat,
-          lon: lon,
-          color: '#666666', // Grey for all users initially
-          size: 4,
-          persona: persona
-        };
-      }).filter(Boolean); // Remove null entries
-      
+    if (
+      allUsers.length > 0 &&
+      nichePersonaIds.length === 0 &&
+      !isGlobalDeployment &&
+      reactions.length === 0
+    ) {
+      const dots = buildGlobeDotsFromUsers(allUsers, { mode: 'neutral' });
       setGlobeDots(dots);
-      console.log(`🌍 [GLOBE] Displaying ${dots.length} live users as grey dots on globe`);
+      console.log(`🌍 [GLOBE] Displaying ${dots.length} users as neutral dots`);
     }
-  }, [allUsers.length, nichePersonaIds.length]); // Only depend on lengths to avoid unnecessary re-runs
+  }, [allUsers, nichePersonaIds.length, isGlobalDeployment, reactions.length]);
 
   // Update dots colors based on reactions only (not selection, as that's handled by updateGlobeDotsForNiche)
   useEffect(() => {
@@ -616,42 +718,15 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   useEffect(() => {
     if (isGlobalDeployment && allUsers.length > 0 && reactions.length === 0) {
       console.log('🌍 [GLOBAL] Setting up white dots for global deployment');
-      const whiteDots = allUsers
-        .map(user => {
-          const persona = user.user_metadata || user;
-          const coords = persona.location?.coordinates;
-          
-          if (!coords) return null;
-          
-          let lat, lng;
-          if ('coordinates' in coords && Array.isArray(coords.coordinates)) {
-            lng = coords.coordinates[0];
-            lat = coords.coordinates[1];
-          } else if ('latitude' in coords && 'longitude' in coords) {
-            lat = coords.latitude;
-            lng = coords.longitude;
-          } else {
-            return null;
-          }
-
-          return {
-            id: persona.personaId,
-            lat: lat,
-            lon: lng,
-            color: '#ffffff', // White for global deployment
-            size: 6,
-            persona: user
-          };
-        })
-        .filter(Boolean);
+      const whiteDots = buildGlobeDotsFromUsers(allUsers, { mode: 'global' });
       
       console.log(`🌍 [GLOBAL] Created ${whiteDots.length} white dots`);
       setGlobeDots(whiteDots);
     }
-  }, [isGlobalDeployment, allUsers.length]); // Only when entering/exiting global mode
+  }, [isGlobalDeployment, allUsers, reactions.length]);
 
   // Load live users from backend (Auth0 first, Supabase fallback).
-  const loadRealAuth0Users = async (): Promise<boolean> => {
+  const loadRealAuth0Users = async (): Promise<any[]> => {
     console.log('👥 [LIVE-USERS] Loading live users...');
     setIsLoadingGlobalUsers(true);
     
@@ -673,9 +748,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
             data.source || 'auth0'
           );
 
-          setAllUsers(data.users);
-          setPersonas(data.users);
-          return true;
+          return data.users;
         } else {
           console.log('⚠️ [LIVE-USERS] No live users found');
         }
@@ -688,11 +761,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     } finally {
       setIsLoadingGlobalUsers(false);
     }
-    return false;
+    return [];
   };
 
   // Load personas from local JSON file (much faster than Auth0)
-  const loadLocalPersonas = async () => {
+  const loadLocalPersonas = async (options?: { silent?: boolean }): Promise<any[]> => {
     console.log('📁 [LOCAL-PERSONAS] Loading personas from local JSON file...');
     
     try {
@@ -702,9 +775,13 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         const data = await response.json();
         if (data.success && data.users && data.users.length > 0) {
           console.log('✅ [LOCAL-PERSONAS] Loaded', data.users.length, 'personas from local file');
-          
-          setAllUsers(data.users);
-          setPersonas(data.users);
+
+          if (!options?.silent) {
+            const normalized = normalizeUserPool(data.users);
+            setAllUsers(normalized);
+            setPersonas(normalized);
+          }
+          return data.users;
         } else {
           console.log('⚠️ [LOCAL-PERSONAS] No personas found in local file');
         }
@@ -714,6 +791,34 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     } catch (error) {
       console.error('💥 [LOCAL-PERSONAS] Error loading personas:', error);
     }
+    return [];
+  };
+  const hydrateGlobalUserPool = async (options?: { setNeutralDots?: boolean }): Promise<Persona[]> => {
+    const liveUsers = await loadRealAuth0Users();
+    let finalUsers = liveUsers;
+
+    if (liveUsers.length < MIN_GLOBE_USERS) {
+      const localUsers = await loadLocalPersonas({ silent: true });
+      finalUsers = liveUsers.length > 0 ? mergeUserPools(liveUsers, localUsers) : localUsers;
+      console.log(
+        `🔄 [USERS] Live users too low (${liveUsers.length}). Supplemented pool to ${finalUsers.length} users for stable globe.`
+      );
+    }
+
+    if (finalUsers.length === 0) {
+      console.warn('⚠️ [USERS] No users available after live+fallback loading');
+      return [];
+    }
+
+    const normalized = normalizeUserPool(finalUsers);
+    setAllUsers(normalized);
+    setPersonas(normalized);
+
+    if (options?.setNeutralDots !== false && !isGlobalDeployment && nichePersonaIds.length === 0) {
+      setGlobeDots(buildGlobeDotsFromUsers(normalized, { mode: 'neutral' }));
+    }
+
+    return normalized;
   };
 
   // Find 100 most relevant users from loaded Auth0 users using Cohere
@@ -785,43 +890,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       return;
     }
     
-    const dots = allUsers.map(persona => {
-      const personaData = persona.user_metadata || persona;
-      
-      if (!personaData.personaId || !personaData.location?.coordinates) {
-        return null;
-      }
-      
-      let lat: number, lon: number;
-      const coords = personaData.location.coordinates;
-      
-      if ('coordinates' in coords && Array.isArray(coords.coordinates)) {
-        // GeoJSON format: { type: string; coordinates: [longitude, latitude] }
-        lon = coords.coordinates[0];
-        lat = coords.coordinates[1];
-      } else if (Array.isArray(coords)) {
-        // Direct array format: [longitude, latitude]
-        lon = coords[0];
-        lat = coords[1];
-      } else if ('latitude' in coords && 'longitude' in coords) {
-        // Object format: { latitude: number; longitude: number }
-        lat = coords.latitude as number;
-        lon = coords.longitude as number;
-      } else {
-        return null;
-      }
-      
-      const isInNiche = nicheIds.includes(personaData.personaId);
-      
-      return {
-        id: personaData.personaId,
-        lat: lat,
-        lon: lon,
-        color: isInNiche ? '#ffffff' : '#444444', // White for niche, grey for others
-        size: isInNiche ? 8 : 4, // Larger for niche personas
-        persona: persona // Use full persona object, not just personaData
-      };
-    }).filter(dot => dot !== null);
+    const dots = buildGlobeDotsFromUsers(allUsers, { mode: 'niche', nicheIds });
     
     console.log(`🌍 [UPDATE-GLOBE] Setting ${dots.length} live-user globe dots (${nicheIds.length} in niche)`);
     setGlobeDots(dots);
@@ -893,10 +962,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       }
       
       // Extract persona IDs from selected users
-      const nicheIds = data.selectedUsers.map((u: any) => {
-        const persona = u.user_metadata || u;
-        return persona.personaId;
-      });
+      const nicheIds = data.selectedUsers.map((u: any, index: number) => getPersonaId(u, index));
       
       setNichePersonaIds(nicheIds);
       setNicheInfo({
@@ -923,8 +989,9 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
 
   // Run sentiment analysis on selected users
   const buildFallbackOpinions = (profiles: any[]) => {
-    return profiles.map((profile: any) => {
+    return profiles.map((profile: any, index: number) => {
       const persona = profile.user_metadata || profile;
+      const personaName = getPersonaName(persona) || `User ${index + 1}`;
       const random = Math.random();
 
       let attention: 'full' | 'partial' | 'ignore' = 'partial';
@@ -943,10 +1010,10 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         sentiment,
         reason:
           attention === 'full'
-            ? `This feels directly relevant to ${persona.name || 'their needs'}.`
+            ? `This feels directly relevant to ${personaName}.`
             : attention === 'partial'
-              ? `${persona.name || 'They'} see potential, but want more clarity before committing.`
-              : `${persona.name || 'They'} do not see enough immediate value right now.`,
+              ? `${personaName} sees potential, but wants more clarity before committing.`
+              : `${personaName} does not see enough immediate value right now.`,
         comment:
           attention === 'ignore'
             ? undefined
@@ -1060,15 +1127,17 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       console.log('✅ [NICHE-PROFILES] Loaded profiles:', data.profiles.length);
       
       // Convert to globe dots for all returned profiles
-      const nicheDots = data.profiles
-        .map((profile: any) => ({
-        id: profile.personaId,
-        lat: profile.location.coordinates.coordinates[1],
-        lon: profile.location.coordinates.coordinates[0],
-        color: '#00ff88', // Green for generated profiles
-        size: 6, // Larger size for niche view
-        persona: profile
-      }));
+      const nicheDots = data.profiles.map((profile: any, index: number) => {
+        const coords = getPersonaCoordinates(profile, index);
+        return {
+          id: getPersonaId(profile, index),
+          lat: coords.lat,
+          lon: coords.lon,
+          color: '#00ff88', // Green for generated profiles
+          size: 6, // Larger size for niche view
+          persona: profile
+        };
+      });
       
       setGlobeDots(nicheDots);
       setPersonas(data.profiles);
@@ -1082,7 +1151,10 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const handleViewModeChange = (mode: 'niche' | 'global') => {
     setViewMode(mode);
     if (mode === 'global') {
-      loadRealAuth0Users();
+      setIsGlobalDeployment(false);
+      setNichePersonaIds([]);
+      setReactions([]);
+      void hydrateGlobalUserPool();
     } else {
       loadNicheProfiles();
     }
@@ -1161,7 +1233,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       // Prepare feedback for refinement
       const feedbackText = feedbackList.map(item => {
         const persona = item.persona.user_metadata || item.persona;
-        return `${persona.name} (${persona.title}, ${persona.demographics.generation}): ${item.reaction.comment || item.reaction.reason}`;
+        return `${getPersonaName(persona)} (${getPersonaTitle(persona)}, ${persona.demographics?.generation || 'Unknown'}): ${item.reaction.comment || item.reaction.reason}`;
       }).join('\n\n');
 
       // Call Cohere to refine the idea
@@ -1244,6 +1316,7 @@ Improved idea:`,
       alert('Please enter an idea first');
       return;
     }
+    let deploymentUsers = allUsers;
 
     setIsGlobalDeployment(true);
     setIsRunningAnalysis(true);
@@ -1254,51 +1327,32 @@ Improved idea:`,
     setCurrentProcessingStep('Deploying globally...');
 
     try {
+      if (deploymentUsers.length < MIN_GLOBE_USERS) {
+        setCurrentProcessingStep('Loading global audience...');
+        deploymentUsers = await hydrateGlobalUserPool({ setNeutralDots: false });
+      }
+
+      if (deploymentUsers.length === 0) {
+        throw new Error('No users available for global deployment');
+      }
+
       // Use all personas for global deployment (no niche filtering)
-      setSelectedUsers(allUsers);
+      setSelectedUsers(deploymentUsers);
       
       // Update globe dots to show all users as WHITE for global deployment
-      const allDots = allUsers
-        .map(user => {
-          const persona = user.user_metadata || user;
-          const coords = persona.location?.coordinates;
-          
-          if (!coords) {
-            console.warn('No coordinates for user:', persona.name);
-            return null;
-          }
-          
-          let lat, lng;
-          if ('coordinates' in coords && Array.isArray(coords.coordinates)) {
-            lng = coords.coordinates[0];
-            lat = coords.coordinates[1];
-          } else if ('latitude' in coords && 'longitude' in coords) {
-            lat = coords.latitude;
-            lng = coords.longitude;
-          } else {
-            console.warn('Invalid coordinate format for user:', persona.name, coords);
-            return null;
-          }
-
-          return {
-            id: persona.personaId,
-            lat: lat,  // Use lat/lon format like in other parts
-            lon: lng,
-            color: '#ffffff', // All nodes turn WHITE for global deployment
-            size: 8, // Make them slightly bigger for global view
-            persona: user
-          };
-        })
-        .filter(Boolean);
+      const allDots = buildGlobeDotsFromUsers(deploymentUsers, { mode: 'global' }).map((dot) => ({
+        ...dot,
+        size: 8,
+      }));
       
       console.log('🌍 [GLOBAL] Created', allDots.length, 'dots for globe');
 
       setGlobeDots(allDots);
 
       // Generate opinions for ALL users (global deployment)
-      console.log('🌍 [GLOBAL] Running analysis on', allUsers.length, 'users globally');
+      console.log('🌍 [GLOBAL] Running analysis on', deploymentUsers.length, 'users globally');
       
-      const opinions = await generateOpinionsWithTimeout(allUsers);
+      const opinions = await generateOpinionsWithTimeout(deploymentUsers);
       console.log('✅ [GLOBAL] Generated', opinions.length, 'opinions globally');
 
       // Run simulation with generated opinions
@@ -1307,7 +1361,7 @@ Improved idea:`,
     } catch (error) {
       console.error('Error in global deployment:', error);
 
-      const fallbackOpinions = buildFallbackOpinions(allUsers);
+      const fallbackOpinions = buildFallbackOpinions(deploymentUsers.length > 0 ? deploymentUsers : allUsers);
       if (fallbackOpinions.length > 0) {
         setCurrentProcessingStep('Backend slow, switching to local global simulation...');
         runGeneratedSimulation(fallbackOpinions);
@@ -1387,6 +1441,7 @@ Improved idea:`,
         console.log('✅ SIMULATION COMPLETE - All opinions processed');
         setIsSimulating(false);
         setIsRunningAnalysis(false);  // FIX: Reset the analyze button
+        setIsGlobalDeployment(false);
         setHasCompletedFirstAnalysis(true);  // FIX: Enable global button
         
         // Generate insights based on the reactions
@@ -1467,7 +1522,7 @@ Improved idea:`,
               setNotifications(prev => {
                 const newNotification = {
                   id: notificationId,
-                  persona: reaction.persona.name,
+                  persona: getPersonaName(reaction.persona),
                   message: message,
                   type: reaction.attention,
                   timestamp: Date.now()
@@ -1513,6 +1568,7 @@ Improved idea:`,
         console.log('✅ DEMO SIMULATION COMPLETE - All personas processed');
         setIsSimulating(false);
         setIsRunningAnalysis(false);  // FIX: Reset the analyze button
+        setIsGlobalDeployment(false);
         setHasCompletedFirstAnalysis(true);  // FIX: Enable global button
         setInsights({
           topEngagementReasons: ['Demo mode - add API keys for real insights'],
@@ -1585,7 +1641,7 @@ Improved idea:`,
             setNotifications(prev => {
               const newNotification = {
                 id: notificationId,
-                persona: persona.name,
+                persona: getPersonaName(persona),
                 message: message,
                 type: reaction.attention,
                 timestamp: Date.now()
@@ -1698,7 +1754,7 @@ Improved idea:`,
                 setNotifications(prev => {
                   const newNotification = {
                     id: notificationId,
-                    persona: persona.name,
+                    persona: getPersonaName(persona),
                     message: message,
                     type: reaction.attention,
                     timestamp: Date.now()
@@ -1923,9 +1979,9 @@ Improved idea:`,
     
     if (!reaction) return '';
     
-    return `You are ${persona.name}, ${persona.title} from ${persona.location.city}.
+    return `You are ${getPersonaName(persona)}, ${getPersonaTitle(persona)} from ${persona.location?.city || 'San Francisco'}.
 
-Context: You're a ${persona.demographics.generation} ${persona.professional.seniority} in ${persona.professional.primaryIndustry}. Your interests include ${persona.interests?.slice(0, 3).join(', ') || 'technology and innovation'}.
+Context: You're a ${persona.demographics?.generation || 'professional'} ${persona.professional?.seniority || 'professional'} in ${persona.professional?.primaryIndustry || 'technology'}. Your interests include ${persona.interests?.slice(0, 3).join(', ') || 'technology and innovation'}.
 
 The user pitched: "${currentPost}"
 
@@ -2007,7 +2063,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     const reaction = reactions.find(r => r.personaId === persona?.personaId);
 
     const firstMessage = reaction && persona ?
-      `Hey, it's ${persona.name}. ${
+      `Hey, it's ${getPersonaName(persona)}. ${
         reaction.attention === 'ignore' 
           ? "Honestly, your idea didn't grab me." 
           : reaction.attention === 'partial'
@@ -2018,7 +2074,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
 
     try {
       const assistantId = await getAssistantIdForCall({
-        name: persona?.name || 'Assistant',
+        name: getPersonaName(persona) || 'Assistant',
         firstMessage,
         systemPrompt:
           systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
@@ -2401,7 +2457,7 @@ Return only the improved idea, no additional commentary.`,
         
         <div className="mt-auto space-y-3">
           <div className="text-xs text-white/60 mb-2">
-          {selectedUsers.length > 0 ? `${selectedUsers.length} users selected` : `${allUsers.length} Auth0 users loaded`}
+          {selectedUsers.length > 0 ? `${selectedUsers.length} users selected` : `${allUsers.length} users loaded`}
         </div>
         
           <div className="text-xs text-white/60 mb-3">
@@ -2483,7 +2539,7 @@ Return only the improved idea, no additional commentary.`,
                 </div>
                 <div className="flex items-center gap-1 ml-4">
                   <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                  <span>{allUsers.length - selectedUsers.length} Other Users</span>
+                  <span>{Math.max(0, allUsers.length - selectedUsers.length)} Other Users</span>
                 </div>
               </div>
             </div>
@@ -3017,7 +3073,7 @@ Return only the improved idea, no additional commentary.`,
                     className="p-3 border border-white/20 rounded bg-black/20"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-white/80">{item.persona.name}</span>
+                      <span className="text-xs font-mono text-white/80">{getPersonaName(item.persona)}</span>
                       <Badge className={`text-xs ${
                         item.reaction.attention === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
                         'bg-red-500/20 text-red-400'
@@ -3217,7 +3273,7 @@ Return only the improved idea, no additional commentary.`,
                 
                 <div className="flex justify-between items-center gap-2">
                   <div className="text-xs text-white/60 font-mono">
-                    {selectedUsers.length > 0 ? `${selectedUsers.length} users selected via Cohere` : `${allUsers.length} Auth0 users loaded`}
+                    {selectedUsers.length > 0 ? `${selectedUsers.length} users selected via Cohere` : `${allUsers.length} users loaded`}
                   </div>
                   <div className="flex gap-2">
                     {!hasEnteredPrompt ? (
