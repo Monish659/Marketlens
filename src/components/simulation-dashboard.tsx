@@ -111,22 +111,33 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   } = useSessionStore();
 
   // Delete session handler
-  const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent session selection when clicking delete
-    
-    if (confirm('Are you sure you want to delete this session? This action cannot be undone.')) {
-      try {
-        await deleteSession(sessionId);
-        
-        // If we deleted the current session, redirect to project without session
-        if (currentSession?._id === sessionId) {
-          const newUrl = `/dashboard?project=${projectId}`;
-          router.replace(newUrl);
-        }
-      } catch (error) {
-        console.error('Failed to delete session:', error);
-        alert('Failed to delete session. Please try again.');
+  const [sessionToDelete, setSessionToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  const requestDeleteSession = (
+    sessionId: string,
+    sessionName: string,
+    event?: React.MouseEvent
+  ) => {
+    if (event) event.stopPropagation();
+    setSessionToDelete({ id: sessionId, name: sessionName || 'Untitled Session' });
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!sessionToDelete) return;
+
+    try {
+      const deletingCurrent = currentSession?._id === sessionToDelete.id;
+      await deleteSession(sessionToDelete.id);
+      setSessionToDelete(null);
+
+      // If we deleted the current session, redirect to project without session
+      if (deletingCurrent && projectId) {
+        const newUrl = `/dashboard?project=${projectId}`;
+        router.replace(newUrl);
       }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      alert('Failed to delete session. Please try again.');
     }
   };
 
@@ -2384,6 +2395,17 @@ Return only the improved idea, no additional commentary.`,
           Create New Session
         </Button>
 
+        {currentSession && (
+          <Button
+            onClick={() => requestDeleteSession(currentSession._id, currentSession.sessionName)}
+            disabled={isSimulating}
+            className="mb-4 bg-red-600/10 text-red-300 hover:bg-red-600/20 border border-red-500/30"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete Current Session
+          </Button>
+        )}
+
         {/* Analysis Sessions */}
         {projectId && (
           <div className="mb-6">
@@ -2438,8 +2460,8 @@ Return only the improved idea, no additional commentary.`,
                   
                   {/* Delete Button */}
                   <button
-                    onClick={(e) => handleDeleteSession(session._id, e)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-500/20 rounded"
+                    onClick={(e) => requestDeleteSession(session._id, session.sessionName, e)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-500/20 rounded"
                     title="Delete session"
                   >
                     <Trash2 className="h-3 w-3 text-red-400 hover:text-red-300" />
@@ -3308,6 +3330,47 @@ Return only the improved idea, no additional commentary.`,
                       </div>
         </div>
       </div>
+
+      {/* Delete Session Confirmation Modal */}
+      <AnimatePresence>
+        {sessionToDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50"
+            onClick={() => setSessionToDelete(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-black border border-white/20 p-6 rounded-lg max-w-md w-full mx-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-mono text-white mb-2">Delete Session</h3>
+              <p className="text-sm text-white/70 mb-4">
+                Delete <span className="text-white">"{sessionToDelete.name}"</span>? This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setSessionToDelete(null)}
+                  className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={confirmDeleteSession}
+                  className="flex-1 bg-red-600/20 text-red-300 hover:bg-red-600/30 border border-red-500/40"
+                >
+                  Delete
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Type Selector Modal */}
         <AnimatePresence>
