@@ -155,22 +155,43 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     firstMessage?: string;
     systemPrompt?: string;
   }) => {
-    const response = await fetch('/api/vapi/assistant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.success || !data?.assistantId) {
-      throw new Error(
-        data?.error ||
-        data?.details?.message ||
-        'Failed to prepare Vapi assistant configuration'
-      );
+    const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
+    if (
+      directAssistantId &&
+      directAssistantId !== 'your_vapi_assistant_id_here'
+    ) {
+      return directAssistantId;
     }
 
-    return data.assistantId as string;
+    const endpoints = ['/api/voice-assistant', '/api/vapi/assistant'];
+    const errors: string[] = [];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        });
+
+        const data = await response.json().catch(() => null);
+        if (response.ok && data?.success && data?.assistantId) {
+          return data.assistantId as string;
+        }
+
+        errors.push(
+          `${endpoint}: ${data?.error || data?.details?.message || response.statusText}`
+        );
+      } catch (error) {
+        errors.push(
+          `${endpoint}: ${error instanceof Error ? error.message : 'Network error'}`
+        );
+      }
+    }
+
+    throw new Error(
+      `Unable to prepare voice assistant. ${errors.join(' | ')}`
+    );
   };
 
   const startCall = async () => {
@@ -212,7 +233,11 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
         err?.error?.message ||
         err?.message ||
         'Failed to start call';
-      setError(`${message}. Check VAPI_PRIVATE_KEY/VAPI_ASSISTANT_ID and mic permissions.`);
+      const hints =
+        message.toLowerCase().includes('failed to fetch')
+          ? 'This is usually network/ad-block related. Try disabling blocker extensions or using Incognito.'
+          : 'Check VAPI_PRIVATE_KEY/VAPI_ASSISTANT_ID and mic permissions.';
+      setError(`${message}. ${hints}`);
       setIsConnecting(false);
       setConnectionStatus('error');
     }
