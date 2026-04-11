@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { extractUserFromHeaders } from '@/lib/auth-adapter';
+import { decryptSensitiveText, encryptSensitiveText } from '@/lib/crypto-safe';
 
 export async function GET(request: NextRequest) {
   try {
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
       _id: session.id,
       projectId: session.project_id,
       sessionName: session.session_name,
-      prompt: session.prompt,
+      prompt: decryptSensitiveText(session.prompt || ''),
       analysisState: session.analysis_state,
       uiState: session.ui_state,
       createdAt: session.created_at,
@@ -127,7 +128,7 @@ export async function POST(request: NextRequest) {
         project_id: projectId,
         user_id: user.id,
         session_name: sessionName,
-        prompt: prompt ?? '',
+        prompt: encryptSensitiveText(prompt ?? ''),
         analysis_state: analysisState || {},
         ui_state: uiState || {}
       })
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       _id: session.id,
       projectId: session.project_id,
       sessionName: session.session_name,
-      prompt: session.prompt,
+      prompt: decryptSensitiveText(session.prompt || ''),
       analysisState: session.analysis_state,
       uiState: session.ui_state,
       createdAt: session.created_at,

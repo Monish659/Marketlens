@@ -7,11 +7,17 @@ export async function GET() {
   const privateKey = process.env.VAPI_PRIVATE_KEY;
   const assistantId =
     process.env.VAPI_ASSISTANT_ID || process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
+  const configuredVoiceProvider =
+    process.env.VAPI_VOICE_PROVIDER || process.env.NEXT_PUBLIC_VAPI_VOICE_PROVIDER || 'openai';
+  const configuredVoiceId =
+    process.env.VAPI_VOICE_ID || process.env.NEXT_PUBLIC_VAPI_VOICE_ID || 'default';
 
   const env = {
     hasPublicKey: Boolean(publicKey),
     hasPrivateKey: Boolean(privateKey),
     hasAssistantId: Boolean(assistantId),
+    configuredVoiceProvider,
+    configuredVoiceId,
   };
 
   if (!privateKey) {

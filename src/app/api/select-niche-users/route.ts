@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const body = await request.json();
-    const { niche, users, prompt, limit = 100 } = body; // Add limit with default of 5
+    const { niche, users, prompt, limit = 100 } = body;
 
     if (!niche || !users || !Array.isArray(users)) {
       console.error('💥 [SELECT-NICHE-USERS] Invalid input:', { 
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     console.log('✅ [SELECT-NICHE-USERS] Cohere rerank completed, got', rerankResults.length, 'results');
 
     // Map rerank results back to user objects
-    const selectedUsers = rerankResults.map((result: any) => {
+    const rankedUsers = rerankResults.map((result: any) => {
       const originalDoc = userDocuments[result.index];
       // Cohere returns 'relevanceScore' (camelCase)
       const score = result.relevanceScore || 0;
@@ -64,6 +64,8 @@ export async function POST(request: NextRequest) {
         profileSummary: originalDoc.text
       };
     });
+
+    const selectedUsers = diversifyByCountry(rankedUsers, Math.min(limit, rankedUsers.length));
 
     // Log relevance score distribution
     const scores = selectedUsers.map(u => u.relevanceScore);
@@ -103,6 +105,37 @@ export async function POST(request: NextRequest) {
       details: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
+}
+
+function diversifyByCountry(rankedUsers: any[], limit: number) {
+  if (rankedUsers.length <= limit) return rankedUsers;
+
+  const byCountry = new Map<string, any[]>();
+  for (const user of rankedUsers) {
+    const persona = user.user_metadata || user;
+    const country = String(persona?.location?.country || 'unknown').toLowerCase();
+    if (!byCountry.has(country)) byCountry.set(country, []);
+    byCountry.get(country)!.push(user);
+  }
+
+  const diversified: any[] = [];
+  const buckets = Array.from(byCountry.values());
+
+  // First pass: pick one from each country bucket to preserve global spread.
+  for (const bucket of buckets) {
+    if (!bucket.length) continue;
+    diversified.push(bucket.shift());
+    if (diversified.length >= limit) return diversified;
+  }
+
+  // Second pass: fill the remainder by highest relevance.
+  const remaining = buckets.flat().sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+  for (const user of remaining) {
+    diversified.push(user);
+    if (diversified.length >= limit) break;
+  }
+
+  return diversified;
 }
 
 function createUserProfileText(user: any, niche: string): string {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getVoiceProfile } from "@/lib/voice-profile";
 
 const VAPI_API_BASE = "https://api.vapi.ai";
 
@@ -6,6 +7,10 @@ type CreateAssistantRequest = {
   name?: string;
   firstMessage?: string;
   systemPrompt?: string;
+  persona?: {
+    demographics?: { gender?: string };
+    location?: { country?: string };
+  };
 };
 
 export async function POST(request: NextRequest) {
@@ -34,6 +39,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const voiceProfile = getVoiceProfile({
+      persona: body.persona,
+    });
+
     const assistantPayload = {
       name: body.name || "MarketLens Persona Assistant",
       firstMessage: body.firstMessage || "Hi there. Tell me what you'd like feedback on.",
@@ -52,9 +61,10 @@ export async function POST(request: NextRequest) {
         ],
       },
       voice: {
-        provider: "openai",
-        voiceId: process.env.VAPI_VOICE_ID || "shimmer",
+        provider: voiceProfile.provider,
+        voiceId: voiceProfile.voiceId,
       },
+      transcriber: voiceProfile.transcriber,
     };
 
     const response = await fetch(`${VAPI_API_BASE}/assistant`, {
@@ -94,4 +104,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

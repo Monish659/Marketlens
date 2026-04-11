@@ -143,6 +143,17 @@ function dedupeProfiles(rows: AnyRecord[]) {
   return out;
 }
 
+function isSeededPersonaUser(user: AnyRecord) {
+  const appMeta = user.app_metadata || {};
+  const userMeta = user.user_metadata || user.raw_user_meta_data || {};
+  return Boolean(
+    appMeta.is_fake_profile ||
+      userMeta.is_fake_profile ||
+      userMeta.personaId ||
+      appMeta.persona_seed
+  );
+}
+
 export async function GET(request: NextRequest) {
   console.log('👥 [FETCH-AUTH0-USERS] API endpoint called');
 
@@ -182,11 +193,13 @@ export async function GET(request: NextRequest) {
             ? rawData.users
             : [];
 
+        const seededUsers = pageUsers.filter(isSeededPersonaUser);
+
         if (page === 0) {
-          totalCount = typeof rawData?.total === 'number' ? rawData.total : pageUsers.length;
+          totalCount = typeof rawData?.total === 'number' ? rawData.total : seededUsers.length;
         }
 
-        allUsers = [...allUsers, ...pageUsers];
+        allUsers = [...allUsers, ...seededUsers];
 
         if (pageUsers.length < perPage || allUsers.length >= limit) break;
       }

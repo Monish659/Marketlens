@@ -6,6 +6,8 @@ import Vapi from '@vapi-ai/web';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { secureFetch } from '@/lib/secure-fetch';
+import { getVoiceProfile } from '@/lib/voice-profile';
 import { 
   Mic, 
   MicOff, 
@@ -154,6 +156,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     name?: string;
     firstMessage?: string;
     systemPrompt?: string;
+    persona?: any;
   }) => {
     const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
     if (
@@ -168,7 +171,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
 
     for (const endpoint of endpoints) {
       try {
-        const response = await fetch(endpoint, {
+        const response = await secureFetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -220,10 +223,45 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
       'Hello! How can I help you today?';
 
     try {
+      const persona = isPersonaMode ? personaContext?.persona : null;
+      const voiceProfile = getVoiceProfile({
+        persona,
+        forcedProvider: process.env.NEXT_PUBLIC_VAPI_VOICE_PROVIDER,
+        forcedVoiceId: process.env.NEXT_PUBLIC_VAPI_VOICE_ID,
+        forcedLanguage: process.env.NEXT_PUBLIC_VAPI_TRANSCRIBER_LANGUAGE,
+      });
+
+      const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
+      if (directAssistantId && directAssistantId !== 'your_vapi_assistant_id_here') {
+        await vapiRef.current.start(directAssistantId as any);
+        return;
+      }
+
+      try {
+        await vapiRef.current.start({
+          name: isPersonaMode && personaContext ? personaContext.persona.name : 'Assistant',
+          firstMessage,
+          model: {
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'system', content: systemPrompt }],
+          },
+          transcriber: voiceProfile.transcriber,
+          voice: {
+            provider: voiceProfile.provider,
+            voiceId: voiceProfile.voiceId,
+          },
+        } as any);
+        return;
+      } catch (inlineError) {
+        console.warn('Inline voice config failed, falling back to server assistant:', inlineError);
+      }
+
       const assistantId = await getAssistantIdForCall({
         name: isPersonaMode && personaContext ? personaContext.persona.name : 'Assistant',
         firstMessage,
         systemPrompt,
+        persona,
       });
 
       await vapiRef.current.start(assistantId as any);
@@ -269,13 +307,13 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-8">
+    <div className="min-h-screen bg-black p-8">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
           {isPersonaMode && personaContext ? (
             <>
-              <Badge className="mb-2 bg-purple-600/20 text-purple-400 border border-purple-600/40">
+              <Badge className="mb-2 bg-white/10 text-white/80 border border-white/25">
                 <User className="h-3 w-3 mr-1" />
                 Persona Mode
               </Badge>
@@ -287,9 +325,9 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
                 <span>{personaContext.persona.professional.primaryIndustry}</span>
                 <span>•</span>
                 <span className={`${
-                  personaContext.reaction.attention === 'full' ? 'text-green-400' :
-                  personaContext.reaction.attention === 'partial' ? 'text-yellow-400' :
-                  'text-red-400'
+                  personaContext.reaction.attention === 'full' ? 'text-white/85' :
+                  personaContext.reaction.attention === 'partial' ? 'text-white/80' :
+                  'text-white/80'
                 }`}>
                   {personaContext.reaction.attention === 'full' ? 'Interested' :
                    personaContext.reaction.attention === 'partial' ? 'Partially Interested' :
@@ -307,13 +345,13 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
 
         {/* Persona Feedback Card */}
         {isPersonaMode && personaContext && (
-          <Card className="p-4 bg-purple-900/20 border border-purple-600/30">
+          <Card className="p-4 bg-white/5 border border-white/20">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-purple-400">Their Feedback:</h3>
+              <h3 className="text-sm font-semibold text-white/80">Their Feedback:</h3>
               <span className={`text-xs font-bold px-2 py-1 rounded ${
-                personaContext.reaction.attention === 'full' ? 'bg-green-500/20 text-green-400' :
-                personaContext.reaction.attention === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
-                'bg-red-500/20 text-red-400'
+                personaContext.reaction.attention === 'full' ? 'bg-white/10 text-white/85' :
+                personaContext.reaction.attention === 'partial' ? 'bg-white/10 text-white/80' :
+                'bg-white/10 text-white/80'
               }`}>
                 {personaContext.reaction.attention === 'full' ? '✓ INTERESTED' :
                  personaContext.reaction.attention === 'partial' ? '~ MIXED FEELINGS' :
@@ -324,7 +362,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
             {personaContext.reaction.comment ? (
               <div className="space-y-2">
                 <p className="text-gray-300 text-sm">{personaContext.reaction.reason}</p>
-                <blockquote className="border-l-2 border-purple-500/50 pl-3">
+                <blockquote className="border-l-2 border-white/20 pl-3">
                   <p className="text-white italic">"{personaContext.reaction.comment}"</p>
                 </blockquote>
               </div>
@@ -332,7 +370,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
               <p className="text-white">{personaContext.reaction.reason}</p>
             )}
             
-            <div className="mt-3 pt-3 border-t border-purple-600/20 flex items-center justify-between">
+            <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-between">
               <p className="text-xs text-gray-500">
                 Sentiment: {(personaContext.reaction.sentiment * 100).toFixed(0)}%
               </p>
@@ -348,9 +386,9 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className={`w-3 h-3 rounded-full ${
-                connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
-                connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                connectionStatus === 'error' ? 'bg-red-500' :
+                connectionStatus === 'connected' ? 'bg-white animate-pulse' :
+                connectionStatus === 'connecting' ? 'bg-white/70 animate-pulse' :
+                connectionStatus === 'error' ? 'bg-white/40' :
                 'bg-gray-500'
               }`} />
               <Badge variant={
@@ -372,8 +410,8 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
 
           {/* Error Display */}
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md">
-              <p className="text-red-400 text-sm">{error}</p>
+            <div className="mb-4 p-3 bg-white/40/10 border border-white/20 rounded-md">
+              <p className="text-white/80 text-sm">{error}</p>
             </div>
           )}
 
@@ -384,7 +422,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
                 onClick={startCall}
                 disabled={isConnecting}
                 size="lg"
-                className="bg-green-600 hover:bg-green-700 text-white px-8"
+                className="bg-white/10 hover:bg-white/20 text-white px-8"
               >
                 {isConnecting ? (
                   <>
@@ -458,8 +496,8 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
                   <div
                     key={index}
                     className={`p-2 rounded ${
-                      line.startsWith('👤') ? 'bg-blue-900/20 text-blue-300' :
-                      line.startsWith('🤖') ? 'bg-green-900/20 text-green-300' :
+                      line.startsWith('👤') ? 'bg-white/10 text-white/80' :
+                      line.startsWith('🤖') ? 'bg-white/10 text-white/85' :
                       'text-gray-400'
                     }`}
                   >
@@ -481,7 +519,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
               <ol className="list-decimal list-inside space-y-1">
                 <li>Create a <code className="bg-gray-900 px-2 py-0.5 rounded">.env.local</code> file in your project root</li>
                 <li>Add your Vapi public key: <code className="bg-gray-900 px-2 py-0.5 rounded">NEXT_PUBLIC_VAPI_PUBLIC_KEY=your_key_here</code></li>
-                <li>Get your key from <a href="https://dashboard.vapi.ai/account" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Vapi Dashboard</a></li>
+                <li>Get your key from <a href="https://dashboard.vapi.ai/account" target="_blank" rel="noopener noreferrer" className="text-white/80 hover:underline">Vapi Dashboard</a></li>
                 <li>Optional: Add provider API keys in the Vapi Dashboard for custom models</li>
               </ol>
             </div>

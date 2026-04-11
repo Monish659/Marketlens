@@ -123,6 +123,8 @@ async function generateOpinionWithCohere(profile: any, idea: string, scenarioCon
   // Create a comprehensive profile description for Cohere
   const profileDescription = createProfileDescription(personaData);
   
+  const audienceConstraints = scenarioContext?.audienceConstraints || {};
+
   const prompt = `You are analyzing how a specific person would react to a new idea or product. 
 
 PERSON PROFILE:
@@ -136,6 +138,9 @@ ${JSON.stringify(scenarioContext || {
   regulationStrictness: 50,
   economicGrowth: 50
 }, null, 2)}
+
+ADDITIONAL AUDIENCE CONSTRAINTS:
+${JSON.stringify(audienceConstraints, null, 2)}
 
 IDEA TO ANALYZE:
 "${idea}"
@@ -159,6 +164,7 @@ Guidelines:
 - sentiment: 0.0 = very negative, 0.5 = neutral, 1.0 = very positive
 - Be realistic based on their actual characteristics
 - Consider their professional background, age, interests, and lifestyle
+- Consider budget/risk/region constraints when deciding practicality
 - Make the reason and comment sound natural and personal
 - For "ignore" and "partial" attention, provide constructive, specific rejection reasoning that helps improve the idea
 - NEVER mention names other than ${personaData.name} in your response`;
@@ -203,7 +209,7 @@ Guidelines:
       reason: opinion.reason,
       comment: opinion.comment,
       sentiment: opinion.sentiment,
-      persona: profile
+      persona: normalizePersonaForOpinion(profile),
     };
 
   } catch (error) {
@@ -280,6 +286,26 @@ function createProfileDescription(personaData: any): string {
   return parts.join('\n');
 }
 
+function normalizePersonaForOpinion(profile: any) {
+  const personaData = profile?.user_metadata || profile || {};
+  const fallbackTitle =
+    personaData.title ||
+    personaData.occupation ||
+    (personaData.professional?.seniority && personaData.professional?.primaryIndustry
+      ? `${personaData.professional.seniority} ${personaData.professional.primaryIndustry}`
+      : personaData.professional?.primaryIndustry) ||
+    'Professional';
+
+  const normalizedPersona = {
+    ...personaData,
+    title: fallbackTitle,
+  };
+
+  return profile?.user_metadata
+    ? { ...profile, user_metadata: normalizedPersona, title: profile.title || fallbackTitle }
+    : normalizedPersona;
+}
+
 function generateFallbackOpinion(profile: any, idea: string, scenarioContext?: any): any {
   // Simple fallback if Cohere fails
   const personaData = profile.user_metadata || profile;
@@ -295,21 +321,29 @@ function generateFallbackOpinion(profile: any, idea: string, scenarioContext?: a
   const growthBoost = ((scenarioContext?.economicGrowth ?? 50) - 50) / 100;
   const scenarioShift = growthBoost - riskPenalty - inflationPenalty;
   const adjusted = random + scenarioShift;
+  const constraints = scenarioContext?.audienceConstraints || {};
+  const constraintsText = [
+    constraints?.budget ? `budget ${constraints.budget}` : null,
+    constraints?.riskTolerance ? `risk ${constraints.riskTolerance}` : null,
+    constraints?.preferredRegion ? `region ${constraints.preferredRegion}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   if (adjusted > 0.7) {
     attention = 'full';
     sentiment = Math.max(0.55, 0.7 + Math.random() * 0.3 + scenarioShift);
-    reason = `This idea aligns well with ${personaData.title || 'their professional background'}`;
+    reason = `This idea aligns well with ${personaData.title || 'their professional background'}${constraintsText ? ` under ${constraintsText}` : ''}`;
     comment = `This looks promising and could be very useful for someone like me.`;
   } else if (adjusted > 0.4) {
     attention = 'partial';
     sentiment = Math.max(0.2, Math.min(0.7, 0.4 + Math.random() * 0.4 + scenarioShift));
-    reason = `Interesting concept, but missing concrete proof and clearer implementation detail`;
+    reason = `Interesting concept, but missing concrete proof and clearer implementation detail${constraintsText ? ` for ${constraintsText}` : ''}`;
     comment = `Could be useful if you show execution steps and measurable outcomes.`;
   } else {
     attention = 'ignore';
     sentiment = Math.max(0, Math.min(0.35, Math.random() * 0.35 + scenarioShift));
-    reason = `Not compelling enough yet because the practical value and risk reduction are unclear`;
+    reason = `Not compelling enough yet because the practical value and risk reduction are unclear${constraintsText ? ` given ${constraintsText}` : ''}`;
     comment = undefined;
   }
   
@@ -319,6 +353,6 @@ function generateFallbackOpinion(profile: any, idea: string, scenarioContext?: a
     reason,
     comment,
     sentiment,
-    persona: profile
+    persona: normalizePersonaForOpinion(profile),
   };
 }

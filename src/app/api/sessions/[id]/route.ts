@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { extractUserFromHeaders } from '@/lib/auth-adapter';
+import { decryptSensitiveText, encryptSensitiveText } from '@/lib/crypto-safe';
 
 export async function GET(
   request: NextRequest,
@@ -46,7 +47,7 @@ export async function GET(
       _id: session.id,
       projectId: session.project_id,
       sessionName: session.session_name,
-      prompt: session.prompt,
+      prompt: decryptSensitiveText(session.prompt || ''),
       analysisState: session.analysis_state,
       uiState: session.ui_state,
       createdAt: session.created_at,
@@ -70,7 +71,7 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const { sessionName, analysisState, uiState } = await request.json();
+    const { sessionName, analysisState, uiState, prompt } = await request.json();
     const headers = extractUserFromHeaders(request);
 
     if (!headers.email && !headers.id) {
@@ -96,6 +97,7 @@ export async function PUT(
     if (sessionName) updateData.session_name = sessionName;
     if (analysisState) updateData.analysis_state = analysisState;
     if (uiState) updateData.ui_state = uiState;
+    if (typeof prompt === 'string') updateData.prompt = encryptSensitiveText(prompt);
 
     const { data: session, error: sessionError } = await supabaseAdmin
       .from('analysis_sessions')
@@ -115,7 +117,7 @@ export async function PUT(
       _id: session.id,
       projectId: session.project_id,
       sessionName: session.session_name,
-      prompt: session.prompt,
+      prompt: decryptSensitiveText(session.prompt || ''),
       analysisState: session.analysis_state,
       uiState: session.ui_state,
       createdAt: session.created_at,

@@ -26,6 +26,11 @@ interface AnalysisSession {
     insights: any;
     nicheInfo: any;
     nichePersonaIds?: number[];
+    audienceConstraints?: {
+      budget?: string;
+      riskTolerance?: string;
+      preferredRegion?: string;
+    };
   };
   uiState: {
     viewMode: 'niche' | 'global';

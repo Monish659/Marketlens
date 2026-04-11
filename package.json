@@ -36,6 +36,7 @@
     "dagre": "^0.8.5",
     "dotenv": "^17.2.2",
     "framer-motion": "^12.23.12",
+    "jose": "^5.10.0",
     "jsdom": "^27.0.0",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.544.0",

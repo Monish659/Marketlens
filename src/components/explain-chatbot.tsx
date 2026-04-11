@@ -154,8 +154,11 @@ export function ExplainChatbot({ idea, reactions }: ExplainChatbotProps) {
 
             <div className="p-3 h-72 overflow-y-auto space-y-2">
               {messages.map((m, idx) => (
-                <div
+                <motion.div
                   key={`${m.role}-${idx}`}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.16 }}
                   className={`rounded-lg px-3 py-2 text-xs leading-relaxed font-mono ${
                     m.role === "user"
                       ? "bg-white text-black ml-8"
@@ -163,13 +166,37 @@ export function ExplainChatbot({ idea, reactions }: ExplainChatbotProps) {
                   }`}
                 >
                   {m.content}
-                </div>
+                </motion.div>
               ))}
 
               {loading && (
-                <div className="rounded-lg px-3 py-2 text-xs font-mono bg-white/10 text-white/80 border border-white/15 mr-8">
-                  Thinking...
-                </div>
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg px-3 py-2 text-xs font-mono bg-white/10 text-white/80 border border-white/15 mr-8"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Thinking</span>
+                    <motion.span
+                      animate={{ opacity: [0.2, 1, 0.2] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                    >
+                      .
+                    </motion.span>
+                    <motion.span
+                      animate={{ opacity: [0.2, 1, 0.2] }}
+                      transition={{ duration: 1, repeat: Infinity, delay: 0.15 }}
+                    >
+                      .
+                    </motion.span>
+                    <motion.span
+                      animate={{ opacity: [0.2, 1, 0.2] }}
+                      transition={{ duration: 1, repeat: Infinity, delay: 0.3 }}
+                    >
+                      .
+                    </motion.span>
+                  </div>
+                </motion.div>
               )}
             </div>
 
@@ -215,4 +242,3 @@ export function ExplainChatbot({ idea, reactions }: ExplainChatbotProps) {
     </>
   );
 }
-

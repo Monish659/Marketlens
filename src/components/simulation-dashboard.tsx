@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ThreeJSGlobeWithDots } from "@/components/threejs-globe-with-dots";
 import useSessionStore from '@/stores/sessionStore';
@@ -11,6 +10,11 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Vapi from '@vapi-ai/web';
 import dynamic from 'next/dynamic';
+import { secureFetch } from '@/lib/secure-fetch';
+import { getVoiceProfile } from '@/lib/voice-profile';
+import { MonoSiteHeader } from '@/components/marketlens/mono-site-header';
+import { MonoSectionCards } from '@/components/marketlens/mono-section-cards';
+import { SimulationTimeline } from '@/components/marketlens/simulation-timeline';
 import { 
   ChevronDown, 
   Plus, 
@@ -39,8 +43,7 @@ import {
   Volume2,
   Loader2,
   Check,
-  SlidersHorizontal,
-  Lock
+  SlidersHorizontal
 } from 'lucide-react';
 
 const ExplainChatbot = dynamic(
@@ -273,6 +276,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     regulationStrictness: 50,
     economicGrowth: 50,
   });
+  const [audienceConstraints, setAudienceConstraints] = useState({
+    budget: '',
+    riskTolerance: 'balanced',
+    preferredRegion: 'global',
+  });
   
   const vapiRef = useRef<Vapi | null>(null);
   const browserRecognitionRef = useRef<any | null>(null);
@@ -293,6 +301,21 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   useEffect(() => {
     isMutedRef.current = isMuted;
   }, [isMuted]);
+
+  const WORLD_CITY_FALLBACKS = [
+    { city: 'Tokyo', country: 'Japan' },
+    { city: 'Berlin', country: 'Germany' },
+    { city: 'Sao Paulo', country: 'Brazil' },
+    { city: 'Mumbai', country: 'India' },
+    { city: 'Lagos', country: 'Nigeria' },
+    { city: 'Toronto', country: 'Canada' },
+    { city: 'Seoul', country: 'South Korea' },
+    { city: 'Sydney', country: 'Australia' },
+    { city: 'Mexico City', country: 'Mexico' },
+    { city: 'Singapore', country: 'Singapore' },
+    { city: 'Cape Town', country: 'South Africa' },
+    { city: 'London', country: 'United Kingdom' },
+  ];
 
   const getPersonaData = (persona: any) => persona?.user_metadata || persona || {};
   const getPersonaId = (persona: any, index = 0) => {
@@ -354,6 +377,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       const data = getPersonaData(user);
       const personaId = getPersonaId(user, index);
       const coords = getPersonaCoordinates(user, index);
+      const fallbackLocation = WORLD_CITY_FALLBACKS[index % WORLD_CITY_FALLBACKS.length];
       const title = getPersonaTitle(user);
       const name = getPersonaName(user);
       const email = data.email || user.email || `${name.toLowerCase().replace(/\s+/g, '.')}@live.local`;
@@ -365,8 +389,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         title,
         email,
         location: {
-          city: data.location?.city || 'San Francisco',
-          country: data.location?.country || 'United States',
+          city: data.location?.city || fallbackLocation.city,
+          country: data.location?.country || fallbackLocation.country,
           coordinates: {
             type: 'Point',
             coordinates: [coords.lon, coords.lat] as [number, number],
@@ -394,11 +418,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         : normalizedPersona;
     });
   };
-  const mergeUserPools = (liveUsers: any[], fallbackUsers: any[]) => {
+  const mergeUserPools = (primaryUsers: any[], secondaryUsers: any[]) => {
     const seen = new Set<string>();
     const merged: any[] = [];
 
-    for (const user of [...liveUsers, ...fallbackUsers]) {
+    for (const user of [...primaryUsers, ...secondaryUsers]) {
       const data = getPersonaData(user);
       const key = `${data.personaId || user.user_id || user.id || ''}|${data.email || user.email || ''}`;
       if (seen.has(key)) continue;
@@ -489,6 +513,13 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setGlobeDots(analysisState.globeDots || []);
       setInsights(analysisState.insights);
       setNicheInfo(analysisState.nicheInfo);
+      setAudienceConstraints(
+        analysisState.audienceConstraints || {
+          budget: '',
+          riskTolerance: 'balanced',
+          preferredRegion: 'global',
+        }
+      );
       
       // Set hasEnteredPrompt based on current selectedUsers state, not restored state
       const currentSelectedUsers = selectedUsers.length > 0 ? selectedUsers : (analysisState.selectedUsers || []);
@@ -544,7 +575,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
               reactions,
               insights,
               nicheInfo,
-              nichePersonaIds
+              nichePersonaIds,
+              audienceConstraints,
             },
             uiState: {
               viewMode,
@@ -573,7 +605,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         reactions,
         insights,
         nicheInfo,
-        nichePersonaIds
+        nichePersonaIds,
+        audienceConstraints,
       };
 
       const uiState = {
@@ -591,7 +624,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   }, [
     selectedUsers, reactions, metrics, globeDots, insights, nicheInfo,
     viewMode, selectedPersona, selectedType, 
-    processedPersonas, currentProcessingStep, hasEnteredPrompt
+    processedPersonas, currentProcessingStep, hasEnteredPrompt, audienceConstraints
   ]);
 
   // Create new session when starting analysis
@@ -647,6 +680,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setIsGlobalDeployment(false);
       setCurrentProcessingStep('');
       setProcessedPersonas(0);
+      setAudienceConstraints({
+        budget: '',
+        riskTolerance: 'balanced',
+        preferredRegion: 'global',
+      });
       
       // Set default simulation type to project-idea
       setSelectedType('project-idea');
@@ -692,7 +730,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         headers['x-user-id'] = parsedTokens.sub || parsedTokens.user_id || 'dev_user_' + Date.now();
       }
       
-      const response = await fetch(`/api/projects/${projectId}`, { headers });
+      const response = await secureFetch(`/api/projects/${projectId}`, { headers });
 
       if (response.ok) {
         const data = await response.json();
@@ -731,8 +769,12 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         
         if (reaction) {
           // Color based on reaction - override any previous color
-          const color = reaction.attention === 'full' ? '#00ff00' :
-                  reaction.attention === 'partial' ? '#ffff00' : '#ff0000';
+          const color =
+            reaction.attention === 'full'
+              ? '#ffffff'
+              : reaction.attention === 'partial'
+                ? '#bdbdbd'
+                : '#5f5f5f';
         return {
           ...dot,
           color,
@@ -789,7 +831,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       });
       if (excludeEmail) query.set('exclude_email', excludeEmail);
 
-      const response = await fetch(`/api/fetch-auth0-users?${query.toString()}`, {
+      const response = await secureFetch(`/api/fetch-auth0-users?${query.toString()}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -799,14 +841,21 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.users && data.users.length > 0) {
+          const sanitizedUsers = data.users.filter((user: any) => {
+            const profile = user?.user_metadata || user;
+            const email = String(profile?.email || user?.email || '').toLowerCase();
+            if (!email || !excludeEmail) return true;
+            return email !== String(excludeEmail).toLowerCase();
+          });
+
           console.log(
             '✅ [LIVE-USERS] Loaded',
-            data.users.length,
+            sanitizedUsers.length,
             'users from source:',
             data.source || 'auth0'
           );
 
-          return data.users;
+          return sanitizedUsers;
         } else {
           console.log('⚠️ [LIVE-USERS] No live users found');
         }
@@ -827,7 +876,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     console.log('📁 [LOCAL-PERSONAS] Loading personas from local JSON file...');
     
     try {
-      const response = await fetch('/api/personas-local');
+      const response = await secureFetch('/api/personas-local');
       
       if (response.ok) {
         const data = await response.json();
@@ -853,15 +902,18 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   };
   const hydrateGlobalUserPool = async (options?: { setNeutralDots?: boolean }): Promise<Persona[]> => {
     const liveUsers = await loadRealAuth0Users();
-    let finalUsers = liveUsers;
+    const localUsers = await loadLocalPersonas({ silent: true });
 
-    if (liveUsers.length < MIN_GLOBE_USERS) {
-      const localUsers = await loadLocalPersonas({ silent: true });
-      finalUsers = liveUsers.length > 0 ? mergeUserPools(liveUsers, localUsers) : localUsers;
-      console.log(
-        `🔄 [USERS] Live users too low (${liveUsers.length}). Supplemented pool to ${finalUsers.length} users for stable globe.`
-      );
+    // Always keep a strong global baseline from bundled personas and enrich with live seeded personas.
+    let finalUsers = mergeUserPools(localUsers, liveUsers);
+
+    if (finalUsers.length < MIN_GLOBE_USERS && liveUsers.length > 0) {
+      finalUsers = mergeUserPools(liveUsers, localUsers);
     }
+
+    console.log(
+      `🌍 [USERS] Hydrated audience: local=${localUsers.length}, live=${liveUsers.length}, final=${finalUsers.length}`
+    );
 
     if (finalUsers.length === 0) {
       console.warn('⚠️ [USERS] No users available after live+fallback loading');
@@ -885,7 +937,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     try {
       // Extract niche from prompt
-      const nicheResponse = await fetch('/api/extract-niche', {
+      const nicheResponse = await secureFetch('/api/extract-niche', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idea: prompt })
@@ -898,17 +950,17 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       
       console.log('✅ [NICHE-SEARCH] Detected niche:', nicheData.niche);
       
-      // Use Cohere to intelligently select the 5 most relevant users
+      // Use Cohere to intelligently select the most relevant users.
       console.log('🤖 [NICHE-SEARCH] Using Cohere to select most relevant users from', allUsers.length, 'total users');
       
-      const selectionResponse = await fetch('/api/select-niche-users', {
+      const selectionResponse = await secureFetch('/api/select-niche-users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           niche: nicheData.niche,
           users: allUsers,
           prompt: prompt,
-          limit: 25  // Add this parameter to limit to 5 users
+          limit: 25
         })
       });
       
@@ -983,7 +1035,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
 
       const parsedTokens = JSON.parse(tokens);
       // First extract the niche
-      const nicheResponse = await fetch('/api/extract-niche', {
+      const nicheResponse = await secureFetch('/api/extract-niche', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idea: postContent })
@@ -997,14 +1049,14 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       console.log('✅ [NICHE-SEARCH] Detected niche:', nicheData.niche);
       
       // Use the working select-niche-users endpoint
-      const response = await fetch('/api/select-niche-users', {
+      const response = await secureFetch('/api/select-niche-users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           niche: nicheData.niche,
           users: allUsers,
           prompt: postContent,
-          limit: 25  // Select only 5 most relevant personas
+          limit: 25
         })
       });
 
@@ -1118,13 +1170,16 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     try {
-      const response = await fetch('/api/generate-opinions', {
+      const response = await secureFetch('/api/generate-opinions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idea: postContent,
           profiles,
-          scenarioContext
+          scenarioContext: {
+            ...scenarioContext,
+            audienceConstraints,
+          },
         }),
         signal: controller.signal
       });
@@ -1199,7 +1254,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     console.log('🎯 [NICHE-PROFILES] Loading generated profiles...');
     
     try {
-      const response = await fetch('/api/generate-profiles', {
+      const response = await secureFetch('/api/generate-profiles', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1222,7 +1277,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
           id: getPersonaId(profile, index),
           lat: coords.lat,
           lon: coords.lon,
-          color: '#00ff88', // Green for generated profiles
+          color: '#ffffff',
           size: 6, // Larger size for niche view
           persona: profile
         };
@@ -1268,7 +1323,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
 
   const fetchPersonas = async () => {
     try {
-      const response = await fetch('/api/personas');
+      const response = await secureFetch('/api/personas');
       const data = await response.json();
       setPersonas(data.personas);
     } catch (error) {
@@ -1326,7 +1381,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       }).join('\n\n');
 
       // Call Cohere to refine the idea
-      const response = await fetch('/api/cohere/generate', {
+      const response = await secureFetch('/api/cohere/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1762,7 +1817,7 @@ Improved idea:`,
     if (!simulationId) return;
 
     try {
-      const response = await fetch(`/api/simulation/${simulationId}`, {
+      const response = await secureFetch(`/api/simulation/${simulationId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1905,7 +1960,7 @@ Improved idea:`,
     if (!simulationId) return;
 
     try {
-      const response = await fetch(`/api/simulation/${simulationId}`);
+      const response = await secureFetch(`/api/simulation/${simulationId}`);
       const data = await response.json();
       
       console.log('📊 [SIMULATION] Full simulation results:', data);
@@ -2105,6 +2160,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     name?: string;
     firstMessage?: string;
     systemPrompt?: string;
+    persona?: any;
   }) => {
     const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
     if (
@@ -2119,7 +2175,7 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
 
     for (const endpoint of endpoints) {
       try {
-        const response = await fetch(endpoint, {
+        const response = await secureFetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -2149,26 +2205,37 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     name?: string;
     firstMessage?: string;
     systemPrompt?: string;
-  }) => ({
-    name: params.name || 'MarketLens Persona Assistant',
-    firstMessage: params.firstMessage || 'Hi there. Tell me what feedback you want.',
-    model: {
-      provider: 'openai',
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content:
-            params.systemPrompt ||
-            'You are a helpful AI assistant. Keep responses conversational and concise.',
-        },
-      ],
-    },
-    voice: {
-      provider: 'openai',
-      voiceId: 'shimmer',
-    },
-  });
+    persona?: any;
+  }) => {
+    const voiceProfile = getVoiceProfile({
+      persona: params.persona,
+      forcedProvider: process.env.NEXT_PUBLIC_VAPI_VOICE_PROVIDER,
+      forcedVoiceId: process.env.NEXT_PUBLIC_VAPI_VOICE_ID,
+      forcedLanguage: process.env.NEXT_PUBLIC_VAPI_TRANSCRIBER_LANGUAGE,
+    });
+
+    return {
+      name: params.name || 'MarketLens Persona Assistant',
+      firstMessage: params.firstMessage || 'Hi there. Tell me what feedback you want.',
+      model: {
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              params.systemPrompt ||
+              'You are a helpful AI assistant. Keep responses conversational and concise.',
+          },
+        ],
+      },
+      transcriber: voiceProfile.transcriber,
+      voice: {
+        provider: voiceProfile.provider,
+        voiceId: voiceProfile.voiceId,
+      },
+    };
+  };
 
   const stopBrowserVoiceFallback = () => {
     browserCallActiveRef.current = false;
@@ -2189,13 +2256,42 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     }
   };
 
-  const speakFallbackText = (text: string) => {
+  const pickBrowserVoice = (persona?: any) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+
+    const country = String(persona?.location?.country || '').toLowerCase();
+    const preferredLanguage = getVoiceProfile({ persona }).transcriber.language.toLowerCase();
+    const gender = String(persona?.demographics?.gender || '').toLowerCase();
+
+    const byLang = voices.filter((voice) => voice.lang.toLowerCase().startsWith(preferredLanguage.slice(0, 2)));
+    const byCountry = byLang.length
+      ? byLang
+      : voices.filter((voice) => country && voice.lang.toLowerCase().includes(country.slice(0, 2)));
+    const pool = byCountry.length ? byCountry : voices;
+
+    const neuralVoice =
+      pool.find((voice) => /neural|premium|enhanced|google|samantha|aaron|alex|victoria/i.test(voice.name)) ||
+      pool.find((voice) => (gender.includes('female') ? /female|woman|victoria|samantha/i.test(voice.name) : false)) ||
+      pool.find((voice) => (gender.includes('male') ? /male|man|aaron|daniel|alex/i.test(voice.name) : false)) ||
+      pool[0];
+
+    return neuralVoice || null;
+  };
+
+  const speakFallbackText = (text: string, persona?: any) => {
     if (typeof window === 'undefined' || !window.speechSynthesis || isMutedRef.current) return;
     try {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1;
-      utterance.pitch = 1;
+      utterance.rate = 0.96;
+      utterance.pitch = 1.02;
       utterance.volume = 1;
+      const voice = pickBrowserVoice(persona);
+      if (voice) {
+        utterance.voice = voice;
+        if (voice.lang) utterance.lang = voice.lang;
+      }
       window.speechSynthesis.speak(utterance);
     } catch (error) {
       console.warn('Failed to use browser speech synthesis:', error);
@@ -2222,7 +2318,7 @@ User: ${userMessage}
 Assistant:`;
 
     try {
-      const response = await fetch('/api/cohere/generate', {
+      const response = await secureFetch('/api/cohere/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2245,6 +2341,7 @@ Assistant:`;
   const startBrowserVoiceFallback = async (params: {
     firstMessage: string;
     systemPrompt: string;
+    persona?: any;
   }) => {
     if (typeof window === 'undefined') {
       throw new Error('Browser voice fallback unavailable on server');
@@ -2268,7 +2365,7 @@ Assistant:`;
     const recognition = new RecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = getVoiceProfile({ persona: params.persona }).transcriber.language || 'en-US';
 
     recognition.onresult = async (event: any) => {
       if (!browserCallActiveRef.current) return;
@@ -2297,7 +2394,7 @@ Assistant:`;
         const reply = await generateFallbackAssistantReply(finalText, params.systemPrompt);
         browserConversationRef.current.push({ role: 'assistant', content: reply });
         setTranscript((prev) => [...prev, `🤖 Assistant: ${reply}`]);
-        speakFallbackText(reply);
+        speakFallbackText(reply, params.persona);
       }
     };
 
@@ -2321,7 +2418,13 @@ Assistant:`;
     setTranscript((prev) => [...prev, '🔁 Browser voice fallback connected']);
     browserConversationRef.current.push({ role: 'assistant', content: params.firstMessage });
     setTranscript((prev) => [...prev, `🤖 Assistant: ${params.firstMessage}`]);
-    speakFallbackText(params.firstMessage);
+    speakFallbackText(params.firstMessage, params.persona);
+  };
+
+  const ensureMicrophonePermission = async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
   };
 
   // Call control functions
@@ -2358,6 +2461,7 @@ Assistant:`;
       firstMessage,
       systemPrompt:
         systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
+      persona,
     };
     fallbackCallParamsRef.current = {
       firstMessage: assistantParams.firstMessage,
@@ -2365,15 +2469,26 @@ Assistant:`;
     };
 
     try {
-      try {
-        const assistantId = await getAssistantIdForCall(assistantParams);
-        await vapiRef.current.start(assistantId as any);
+      await ensureMicrophonePermission();
+
+      const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
+      if (
+        directAssistantId &&
+        directAssistantId !== 'your_vapi_assistant_id_here'
+      ) {
+        await vapiRef.current.start(directAssistantId as any);
         return;
-      } catch (assistantError) {
-        console.warn('⚠️ [VAPI] Assistant-id flow failed, trying inline assistant config:', assistantError);
       }
 
-      await vapiRef.current.start(buildInlineAssistantConfig(assistantParams) as any);
+      try {
+        await vapiRef.current.start(buildInlineAssistantConfig(assistantParams) as any);
+        return;
+      } catch (inlineError) {
+        console.warn('⚠️ [VAPI] Inline assistant start failed, trying server-created assistant:', inlineError);
+      }
+
+      const assistantId = await getAssistantIdForCall(assistantParams);
+      await vapiRef.current.start(assistantId as any);
     } catch (err: any) {
       console.error('Failed to start call:', err);
       const message =
@@ -2386,7 +2501,7 @@ Assistant:`;
           : 'Check NEXT_PUBLIC_VAPI_PUBLIC_KEY, VAPI_PRIVATE_KEY, and VAPI_ASSISTANT_ID.';
       let diagnostics = '';
       try {
-        const healthResponse = await fetch('/api/vapi/health');
+        const healthResponse = await secureFetch('/api/vapi/health');
         const health = await healthResponse.json();
         diagnostics = ` Diagnostics: publicKey=${health?.env?.hasPublicKey ? 'ok' : 'missing'}, privateKey=${health?.env?.hasPrivateKey ? 'ok' : 'missing'}, assistantId=${health?.env?.hasAssistantId ? 'set' : 'not-set'}, vapiStatus=${health?.network?.status ?? 'n/a'}.`;
       } catch {
@@ -2397,6 +2512,7 @@ Assistant:`;
         await startBrowserVoiceFallback({
           firstMessage: assistantParams.firstMessage,
           systemPrompt: assistantParams.systemPrompt,
+          persona: assistantParams.persona,
         });
         setError(`Vapi unavailable (${message}). Browser fallback enabled.${diagnostics}`);
         return;
@@ -2503,7 +2619,7 @@ Assistant:`;
     setIsGeneratingFeedback(true);
     
     try {
-      const response = await fetch('/api/cohere/generate', {
+      const response = await secureFetch('/api/cohere/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2609,7 +2725,7 @@ ${partialReasons.length > 0 ? partialReasons.join('\n') : 'No specific improveme
 POSITIVE ASPECTS TO BUILD ON:
 ${positiveComments.length > 0 ? positiveComments.join('\n') : 'No specific positive feedback'}`;
 
-      const response = await fetch('/api/cohere/generate', {
+      const response = await secureFetch('/api/cohere/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2741,7 +2857,7 @@ Return only the improved idea, no additional commentary.`,
           <Button
             onClick={() => requestDeleteSession(currentSession._id, currentSession.sessionName)}
             disabled={isSimulating}
-            className="mb-4 bg-red-600/10 text-red-300 hover:bg-red-600/20 border border-red-500/30"
+            className="mb-4 bg-white/5 text-white/80 hover:bg-white/10 border border-white/20"
           >
             <Trash2 className="h-4 w-4 mr-2" />
             Delete Current Session
@@ -2760,7 +2876,7 @@ Return only the improved idea, no additional commentary.`,
                 </div>
               )}
               {isSaving && (
-                <div className="flex items-center text-blue-400 text-xs">
+                <div className="flex items-center text-white/70 text-xs">
                   <Save className="h-3 w-3 mr-1 animate-spin" />
                   Saving...
                 </div>
@@ -2803,10 +2919,10 @@ Return only the improved idea, no additional commentary.`,
                   {/* Delete Button */}
                   <button
                     onClick={(e) => requestDeleteSession(session._id, session.sessionName, e)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-500/20 rounded"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-80 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
                     title="Delete session"
                   >
-                    <Trash2 className="h-3 w-3 text-red-400 hover:text-red-300" />
+                    <Trash2 className="h-3 w-3 text-white/55 hover:text-white/80" />
                   </button>
                 </div>
               ))}
@@ -2837,58 +2953,38 @@ Return only the improved idea, no additional commentary.`,
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Top Bar */}
-        <div className="border-b border-white/10 p-2 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {project && (
-              <div className="flex items-center gap-3">
-                <div>
-                  <h1 className="text-lg font-mono text-white">{project.name}</h1>
-                  {project.description && (
-                    <p className="text-xs text-white/60">{project.description}</p>
-                  )}
-                </div>
-                <div className="px-2 py-1 border border-white/20 bg-white/5 text-[10px] font-mono uppercase tracking-wide text-white/70 flex items-center gap-1">
-                  <Lock className="h-3 w-3" />
-                  Private Simulation
-                </div>
-              </div>
-            )}
-          </div>
-          {/* <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-xs">United States</Badge>
-            <Badge variant="outline" className="text-xs">United Kingdom</Badge>
-            <Badge variant="outline" className="text-xs">Germany</Badge>
-            <Badge variant="outline" className="text-xs">Canada</Badge>
-            <Badge variant="outline" className="text-xs">Australia</Badge>
-          </div> */}
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              className="text-xs hover:bg-white/5 border border-white/15"
-              onClick={() => {}}
-            >
-              <Share2 className="h-3 w-3 mr-2" />
-              Share
-            </Button>
-            <Button
-              variant="ghost"
-              className="text-xs hover:bg-white/5 border border-white/15"
-              onClick={() => {}}
-            >
-              <FileText className="h-3 w-3 mr-2" />
-              Export
-            </Button>
-            <Button
-              variant="ghost"
-              className="text-xs hover:bg-white/5 border border-white/15"
-              onClick={() => scheduleAutoSave()}
-            >
-              <Save className="h-3 w-3 mr-2" />
-              Save
-            </Button>
-          </div>
-        </div>
+        <MonoSiteHeader
+          title={project?.name || "MarketLens"}
+          subtitle={project?.description || "AI agents for simulated market research"}
+          actions={
+            <>
+              <Button
+                variant="ghost"
+                className="text-xs hover:bg-white/5 border border-white/15"
+                onClick={() => {}}
+              >
+                <Share2 className="h-3 w-3 mr-2" />
+                Share
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-xs hover:bg-white/5 border border-white/15"
+                onClick={() => {}}
+              >
+                <FileText className="h-3 w-3 mr-2" />
+                Export
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-xs hover:bg-white/5 border border-white/15"
+                onClick={() => scheduleAutoSave()}
+              >
+                <Save className="h-3 w-3 mr-2" />
+                Save
+              </Button>
+            </>
+          }
+        />
 
         {/* Filter System Controls - Only show after prompt entered */}
         {hasEnteredPrompt && (
@@ -2929,6 +3025,13 @@ Return only the improved idea, no additional commentary.`,
                 </div>
               </div>
             </div>
+
+            <SimulationTimeline
+              hasPrompt={Boolean(postContent.trim() || currentPost.trim())}
+              hasFocusGroup={selectedUsers.length > 0}
+              isRunning={isRunningAnalysis}
+              hasResults={reactions.length > 0 && !isRunningAnalysis}
+            />
 
             <div className="border border-white/15 bg-black/40">
               <button
@@ -2996,13 +3099,14 @@ Return only the improved idea, no additional commentary.`,
           <div className="flex-1 relative bg-black">
             <div className="absolute inset-0 flex items-center justify-center">
               <ThreeJSGlobeWithDots 
-                size={800}
+                size={640}
                 color="#333333"
                 speed={0.003}
                 dots={globeDots}
                 onDotClick={handleDotClick}
               />
             </div>
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_45%,rgba(0,0,0,0.78)_100%)]" />
             
             {/* Loading Animation - Top Left of Globe */}
             {isSimulating && (
@@ -3132,188 +3236,12 @@ Return only the improved idea, no additional commentary.`,
             />
             <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 sidebar-scroll">
             
-            {/* Mission Status Block */}
-            <div className="border border-white/20 bg-black/40 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-400"></div>
-                  <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Mission Status</span>
-                </div>
-                <span className="text-xs text-white/60 font-mono">ACTIVE</span>
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex justify-between items-end">
-                  <span className="text-xs text-white/60 font-mono">Impact Score</span>
-                  <span className="text-lg font-mono text-white font-bold">{impactScore}</span>
-                </div>
-                
-                {/* Terminal-style progress bar */}
-                <div className="font-mono text-xs">
-                  <div className="flex">
-                    {Array.from({ length: 20 }, (_, i) => (
-                      <span 
-                        key={i} 
-                        className={`inline-block w-2 h-3 mr-0.5 transition-all duration-300 ${
-                          i < Math.floor(impactScore / 5) ? 'bg-white' : 
-                          isSimulating ? 'bg-white/20 pulse-box' : 'bg-white/20'
-                        }`}
-                        style={{
-                          animationDelay: isSimulating ? `${i * 50}ms` : '0ms',
-                          animationName: isSimulating && i < Math.floor(impactScore / 5) ? 'fillBlock' : 'none',
-                          animationDuration: '0.2s',
-                          animationTimingFunction: 'ease-in-out',
-                          animationFillMode: 'forwards'
-                        }}
-                      ></span>
-                    ))}
-                  </div>
-                  <div className="flex justify-between mt-1 text-white/40">
-                    <span>0</span>
-                    <span>100</span>
-                  </div>
-                </div>
-                
-                <div className="text-xs font-mono text-white/60 mt-2">
-                  Status: {impactScore <= 20 ? 'CRITICAL' : 
-                           impactScore <= 40 ? 'LOW' :
-                           impactScore <= 60 ? 'MODERATE' :
-                           impactScore <= 80 ? 'HIGH' : 'OPTIMAL'}
-                </div>
-              </div>
-            </div>
-
-            {/* Agent Activity Block */}
-            <div className="border border-white/20 bg-black/40 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-400"></div>
-                  <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Agent Activity</span>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-4 text-center">
-                  <div>
-                    <div className={`text-lg font-mono font-bold text-white transition-all duration-500 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {metrics.fullAttention || 0}
-                    </div>
-                    <div className="text-xs text-white/60">High</div>
-                  </div>
-                  <div>
-                    <div className={`text-lg font-mono font-bold text-white transition-all duration-500 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {metrics.partialAttention || 0}
-                    </div>
-                    <div className="text-xs text-white/60">Medium</div>
-                  </div>
-                  <div>
-                    <div className={`text-lg font-mono font-bold text-white transition-all duration-500 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {metrics.ignored || 0}
-                    </div>
-                    <div className="text-xs text-white/60">Low</div>
-                  </div>
-                </div>
-                
-                {/* Engagement Level Blocks */}
-                <div className="space-y-2 mt-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-white"></div>
-                      <span className="text-xs font-mono text-white/80">HIGH ENGAGEMENT</span>
-                    </div>
-                    <span className={`text-xs font-mono text-white/60 transition-all duration-300 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {fullPercent}
-                    </span>
-                  </div>
-                  <div className="flex">
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <div 
-                        key={i} 
-                        className={`w-4 h-2 mr-1 transition-all duration-300 ${
-                          i < Math.floor(fullPercent / 10) ? 'bg-white' : 
-                          isSimulating ? 'bg-white/20 pulse-box' : 'bg-white/20'
-                        }`}
-                        style={{
-                          animationDelay: isSimulating ? `${i * 100}ms` : '0ms',
-                          animationName: isSimulating && i < Math.floor(fullPercent / 10) ? 'fillBlock' : 'none',
-                          animationDuration: '0.3s',
-                          animationTimingFunction: 'ease-in-out',
-                          animationFillMode: 'forwards'
-                        }}
-                      ></div>
-                    ))}
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-white"></div>
-                      <span className="text-xs font-mono text-white/80">MEDIUM ENGAGEMENT</span>
-                    </div>
-                    <span className={`text-xs font-mono text-white/60 transition-all duration-300 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {partialPercent}
-                    </span>
-                  </div>
-                  <div className="flex">
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <div 
-                        key={i} 
-                        className={`w-4 h-2 mr-1 transition-all duration-300 ${
-                          i < Math.floor(partialPercent / 10) ? 'bg-white' : 
-                          isSimulating ? 'bg-white/20 pulse-box' : 'bg-white/20'
-                        }`}
-                        style={{
-                          animationDelay: isSimulating ? `${i * 100}ms` : '0ms',
-                          animationName: isSimulating && i < Math.floor(partialPercent / 10) ? 'fillBlock' : 'none',
-                          animationDuration: '0.3s',
-                          animationTimingFunction: 'ease-in-out',
-                          animationFillMode: 'forwards'
-                        }}
-                      ></div>
-                    ))}
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-white"></div>
-                      <span className="text-xs font-mono text-white/80">LOW ENGAGEMENT</span>
-                    </div>
-                    <span className={`text-xs font-mono text-white/60 transition-all duration-300 ${
-                      isSimulating ? 'animate-pulse' : ''
-                    }`}>
-                      {ignorePercent}
-                    </span>
-                  </div>
-                  <div className="flex">
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <div 
-                        key={i} 
-                        className={`w-4 h-2 mr-1 transition-all duration-300 ${
-                          i < Math.floor(ignorePercent / 10) ? 'bg-white' : 
-                          isSimulating ? 'bg-white/20 pulse-box' : 'bg-white/20'
-                        }`}
-                        style={{
-                          animationDelay: isSimulating ? `${i * 100}ms` : '0ms',
-                          animationName: isSimulating && i < Math.floor(ignorePercent / 10) ? 'fillBlock' : 'none',
-                          animationDuration: '0.3s',
-                          animationTimingFunction: 'ease-in-out',
-                          animationFillMode: 'forwards'
-                        }}
-                      ></div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <MonoSectionCards
+              fullAttention={metrics.fullAttention || 0}
+              partialAttention={metrics.partialAttention || 0}
+              ignored={metrics.ignored || 0}
+              total={metrics.totalResponses || 0}
+            />
 
 
              {/* Reaction List */}
@@ -3321,7 +3249,7 @@ Return only the improved idea, no additional commentary.`,
             <div className="border border-white/20 bg-black/40 p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-yellow-400"></div>
+                    <div className="w-2 h-2 bg-white/70"></div>
                     <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Live Reactions</span>
                 </div>
                   <span className="text-xs text-white/60 font-mono">{reactions.length} RESPONSES</span>
@@ -3333,8 +3261,8 @@ Return only the improved idea, no additional commentary.`,
                       <div className="flex items-center justify-between">
                         <span className="text-white/90 font-mono">{reaction.persona?.name || 'Unknown'}</span>
                         <div className={`w-2 h-2 ${
-                          reaction.attention === 'full' ? 'bg-green-400' :
-                          reaction.attention === 'partial' ? 'bg-yellow-400' : 'bg-red-400'
+                          reaction.attention === 'full' ? 'bg-white' :
+                          reaction.attention === 'partial' ? 'bg-white/70' : 'bg-white/40'
                         }`}></div>
                       </div>
                       {reaction.comment && (
@@ -3362,7 +3290,7 @@ Return only the improved idea, no additional commentary.`,
               <div className="border border-white/20 bg-black/40 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-cyan-400"></div>
+                    <div className="w-2 h-2 bg-white/70"></div>
                     <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Mission Deliverables</span>
                   </div>
                   {/* Add Improve Prompt Button - Show when reactions are available */}
@@ -3370,7 +3298,7 @@ Return only the improved idea, no additional commentary.`,
                     <Button
                       onClick={generateImprovedPrompt}
                       disabled={isGeneratingImprovedPrompt}
-                      className="bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs px-3 py-1 h-auto"
+                      className="bg-white/10 hover:bg-white/15 border border-white/20 text-white/85 text-xs px-3 py-1 h-auto"
                     >
                       {isGeneratingImprovedPrompt ? (
                         <>
@@ -3390,13 +3318,13 @@ Return only the improved idea, no additional commentary.`,
                 <div className="space-y-3">
                   {/* Show actionable feedback if available */}
                   {showFeedback && feedbackSummary && (
-                    <div className="bg-cyan-900/20 border border-cyan-500/30 p-4 rounded mb-4">
+                    <div className="bg-white/5 border border-white/20 p-4 rounded mb-4">
                       <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-mono text-cyan-400 uppercase tracking-wider">Actionable Feedback</span>
+                        <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Actionable Feedback</span>
                         {isGeneratingFeedback && (
                       <div className="flex items-center gap-2">
-                            <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
-                            <span className="text-xs text-cyan-400 font-mono">Generating...</span>
+                            <Loader2 className="w-3 h-3 animate-spin text-white/80" />
+                            <span className="text-xs text-white/80 font-mono">Generating...</span>
                       </div>
                         )}
                       </div>
@@ -3406,9 +3334,9 @@ Return only the improved idea, no additional commentary.`,
                       
                       {/* Show improved prompt if generated */}
                       {improvedPrompt && (
-                        <div className="mt-4 pt-4 border-t border-cyan-500/30">
+                        <div className="mt-4 pt-4 border-t border-white/20">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-mono text-green-400 uppercase tracking-wider">Improved Prompt</span>
+                            <span className="text-xs font-mono text-white uppercase tracking-wider">Improved Prompt</span>
                             <Button
                               onClick={() => {
                                 setPostContent(improvedPrompt);
@@ -3431,12 +3359,12 @@ Return only the improved idea, no additional commentary.`,
                                 setFeedbackSummary('');
                                 setImprovedPrompt('');
                               }}
-                              className="bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 text-green-300 text-xs px-2 py-1 h-auto"
+                              className="bg-white/10 hover:bg-white/15 border border-white/20 text-white/85 text-xs px-2 py-1 h-auto"
                             >
                               Use This Version
                             </Button>
                     </div>
-                          <div className="text-sm text-green-300/90 font-mono leading-relaxed bg-green-900/10 border border-green-500/20 p-3 rounded">
+                          <div className="text-sm text-white/85 font-mono leading-relaxed bg-white/5 border border-white/20 p-3 rounded">
                             {improvedPrompt}
                       </div>
                       </div>
@@ -3454,7 +3382,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'ignore' && r.reason)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono bg-gradient-to-r from-red-400 to-rose-400 bg-clip-text text-transparent pl-2 border-l-2 border-red-400/50 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-red-500/60 before:to-rose-400/40">
+                            <div key={i} className="text-xs font-mono bg-gradient-to-r from-white/90 to-white/55 bg-clip-text text-white/85 pl-2 border-l-2 border-white/20 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-white/70 before:to-white/35">
                               {r.reason}
                   </div>
                 ))}
@@ -3472,7 +3400,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'partial' && r.reason)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono text-yellow-400 pl-2 border-l border-yellow-400/30">
+                            <div key={i} className="text-xs font-mono text-white/80 pl-2 border-l border-white/20">
                               {r.reason}
                             </div>
                           ))}
@@ -3489,7 +3417,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'full' && r.comment)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono text-green-400 pl-2 border-l border-green-400/30">
+                            <div key={i} className="text-xs font-mono text-white pl-2 border-l border-white/20">
                               {r.comment}
                             </div>
                           ))}
@@ -3505,7 +3433,7 @@ Return only the improved idea, no additional commentary.`,
             <div className="border border-white/20 bg-black/40 p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-orange-400"></div>
+                  <div className="w-2 h-2 bg-white/70"></div>
                   <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Feedback List ({feedbackList.length})</span>
                 </div>
               </div>
@@ -3519,8 +3447,8 @@ Return only the improved idea, no additional commentary.`,
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-mono text-white/80">{getPersonaName(item.persona)}</span>
                       <Badge className={`text-xs ${
-                        item.reaction.attention === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
-                        'bg-red-500/20 text-red-400'
+                        item.reaction.attention === 'partial' ? 'bg-white/10 text-white/80' :
+                        'bg-white/10 text-white/80'
                       }`}>
                         {item.reaction.attention === 'partial' ? 'Neutral' : 'Negative'}
                       </Badge>
@@ -3542,7 +3470,7 @@ Return only the improved idea, no additional commentary.`,
                   <Button
                     onClick={refineIdea}
                     disabled={isRefining}
-                    className="w-full bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 border border-cyan-600/40 font-mono text-xs"
+                    className="w-full bg-white/10 text-white/80 hover:bg-white/15 border border-white/25 font-mono text-xs"
                   >
                     {isRefining ? (
                       <>
@@ -3565,7 +3493,7 @@ Return only the improved idea, no additional commentary.`,
               <div className="border border-white/20 bg-black/40 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-purple-400"></div>
+                    <div className="w-2 h-2 bg-white/70"></div>
                     <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Brief Announcement</span>
                   </div>
                 </div>
@@ -3578,7 +3506,7 @@ Return only the improved idea, no additional commentary.`,
                       </div>
                       <div className="space-y-1">
                         {insights.topIgnoreReasons.slice(0, 3).map((reason: string, i: number) => (
-                          <div key={i} className="text-xs font-mono bg-gradient-to-r from-red-400 to-rose-400 bg-clip-text text-transparent pl-2 border-l-2 border-red-400/50 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-red-500/60 before:to-rose-400/40">
+                          <div key={i} className="text-xs font-mono bg-gradient-to-r from-white/90 to-white/55 bg-clip-text text-white/85 pl-2 border-l-2 border-white/20 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-white/70 before:to-white/35">
                             {reason}
                           </div>
                         ))}
@@ -3593,7 +3521,7 @@ Return only the improved idea, no additional commentary.`,
                       </div>
                       <div className="space-y-2">
                         {insights.recommendations.slice(0, 3).map((rec: string, i: number) => (
-                          <div key={i} className="text-xs font-mono text-white/80 pl-2 border-l border-green-400/30">
+                          <div key={i} className="text-xs font-mono text-white/80 pl-2 border-l border-white/20">
                             {rec}
                           </div>
                         ))}
@@ -3605,7 +3533,7 @@ Return only the improved idea, no additional commentary.`,
                     <div className="pt-2 border-t border-white/20">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-mono text-white/60">VIRAL COEFFICIENT:</span>
-                        <span className="text-sm font-mono font-bold text-cyan-400">{insights.viralPotentialScore}/100</span>
+                        <span className="text-sm font-mono font-bold text-white/80">{insights.viralPotentialScore}/100</span>
                       </div>
                       {insights.viralPotentialExplanation && (
                         <div className="text-xs font-mono text-white/60 leading-relaxed">
@@ -3623,7 +3551,7 @@ Return only the improved idea, no additional commentary.`,
               <div className="border border-white/20 bg-black/40 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-cyan-400"></div>
+                    <div className="w-2 h-2 bg-white/70"></div>
                     <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Target Operation</span>
                   </div>
                 </div>
@@ -3639,7 +3567,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'ignore' && r.reason)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono bg-gradient-to-r from-red-400 to-rose-400 bg-clip-text text-transparent pl-2 border-l-2 border-red-400/50 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-red-500/60 before:to-rose-400/40">
+                            <div key={i} className="text-xs font-mono bg-gradient-to-r from-white/90 to-white/55 bg-clip-text text-white/85 pl-2 border-l-2 border-white/20 relative before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-gradient-to-b before:from-white/70 before:to-white/35">
                               "{r.reason}"
                             </div>
                           ))}
@@ -3656,7 +3584,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'partial' && r.reason)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono text-yellow-400 pl-2 border-l border-yellow-400/30">
+                            <div key={i} className="text-xs font-mono text-white/80 pl-2 border-l border-white/20">
                               "{r.reason}"
                             </div>
                           ))}
@@ -3673,7 +3601,7 @@ Return only the improved idea, no additional commentary.`,
                         {reactions.filter(r => r.attention === 'full' && r.comment)
                           .slice(0, 3)
                           .map((r, i) => (
-                            <div key={i} className="text-xs font-mono text-green-400 pl-2 border-l border-green-400/30">
+                            <div key={i} className="text-xs font-mono text-white pl-2 border-l border-white/20">
                               "{r.comment}"
                             </div>
                           ))}
@@ -3688,7 +3616,7 @@ Return only the improved idea, no additional commentary.`,
             <div className="border border-white/20 bg-black/40 p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-400"></div>
+                  <div className="w-2 h-2 bg-white/70"></div>
                   <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Analysis Input</span>
                 </div>
               </div>
@@ -3709,6 +3637,42 @@ Return only the improved idea, no additional commentary.`,
                     }
                   }}
                 />
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <input
+                    value={audienceConstraints.budget}
+                    onChange={(e) =>
+                      setAudienceConstraints((prev) => ({ ...prev, budget: e.target.value }))
+                    }
+                    placeholder="Budget (optional)"
+                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                  />
+                  <select
+                    value={audienceConstraints.riskTolerance}
+                    onChange={(e) =>
+                      setAudienceConstraints((prev) => ({
+                        ...prev,
+                        riskTolerance: e.target.value,
+                      }))
+                    }
+                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                  >
+                    <option value="low">Risk: Low</option>
+                    <option value="balanced">Risk: Balanced</option>
+                    <option value="high">Risk: High</option>
+                  </select>
+                  <input
+                    value={audienceConstraints.preferredRegion}
+                    onChange={(e) =>
+                      setAudienceConstraints((prev) => ({
+                        ...prev,
+                        preferredRegion: e.target.value,
+                      }))
+                    }
+                    placeholder="Target region (e.g. Europe)"
+                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                  />
+                </div>
                 
                 {/* Small text about global deployment */}
                 <div className="text-xs text-white/40 font-mono text-center">
@@ -3732,7 +3696,7 @@ Return only the improved idea, no additional commentary.`,
                       <Button
                         onClick={runAnalysis}
                         disabled={selectedUsers.length === 0 || isRunningAnalysis}
-                        className="bg-green-600/20 hover:bg-green-600/30 border border-green-500/30 font-mono text-xs px-4 py-2 text-green-300"
+                        className="bg-white/10 hover:bg-white/15 border border-white/20 font-mono text-xs px-4 py-2 text-white/85"
                       >
                         {isRunningAnalysis ? 'Running...' : 'Run Analysis'}
                       </Button>
@@ -3742,7 +3706,7 @@ Return only the improved idea, no additional commentary.`,
                 
                 <div className="text-xs text-white/40 font-mono">
                   {!hasEnteredPrompt 
-                    ? 'Ctrl+Enter to select focus group • Uses Cohere to select 5 most relevant personas'
+                    ? 'Ctrl+Enter to select focus group • Uses Cohere to select top 25 relevant personas'
                     : 'Click "Run Analysis" to analyze sentiment of selected users'}
                 </div>
               </div>
@@ -3784,7 +3748,7 @@ Return only the improved idea, no additional commentary.`,
                 </Button>
                 <Button
                   onClick={confirmDeleteSession}
-                  className="flex-1 bg-red-600/20 text-red-300 hover:bg-red-600/30 border border-red-500/40"
+                  className="flex-1 bg-white/10 text-white/85 hover:bg-white/15 border border-white/25"
                 >
                   Delete
                 </Button>
@@ -4030,9 +3994,9 @@ Return only the improved idea, no additional commentary.`,
                       <div className="space-y-2 text-xs">
                         <Badge 
                           className={`${
-                            reaction.attention === 'full' ? 'bg-green-900/30 text-green-400' :
-                            reaction.attention === 'partial' ? 'bg-yellow-900/30 text-yellow-400' :
-                            'bg-gradient-to-br from-red-900/40 via-rose-900/30 to-red-800/20 border border-red-500/30 shadow-lg shadow-red-500/20 text-red-300'
+                            reaction.attention === 'full' ? 'bg-white/10 text-white' :
+                            reaction.attention === 'partial' ? 'bg-white/10 text-white/80' :
+                            'bg-gradient-to-br from-white/10 via-white/10 to-white/5 border border-white/25 shadow-lg shadow-white/10 text-white/85'
                           }`}
                         >
                           {reaction.attention}
@@ -4060,8 +4024,8 @@ Return only the improved idea, no additional commentary.`,
               
               {/* Error Display */}
               {error && (
-                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md">
-                  <p className="text-red-400 text-xs">{error}</p>
+                <div className="mt-4 p-3 bg-white/5 border border-white/20 rounded-md">
+                  <p className="text-white/80 text-xs">{error}</p>
                 </div>
               )}
 
@@ -4071,9 +4035,9 @@ Return only the improved idea, no additional commentary.`,
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <div className={`w-2 h-2 rounded-full ${
-                        connectionStatus === 'connected' ? 'bg-green-400 animate-pulse' :
-                        connectionStatus === 'connecting' ? 'bg-yellow-400 animate-pulse' :
-                        'bg-red-400'
+                        connectionStatus === 'connected' ? 'bg-white animate-pulse' :
+                        connectionStatus === 'connecting' ? 'bg-white/70 animate-pulse' :
+                        'bg-white/40'
                       }`}></div>
                       <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Live Call</span>
                       {callEngine === 'browser' && (
@@ -4099,7 +4063,7 @@ Return only the improved idea, no additional commentary.`,
                       onClick={toggleMute}
                       className={`w-12 h-12 rounded-full border-2 ${
                         isMuted 
-                          ? 'bg-red-600/20 border-red-500/40 text-red-400 hover:bg-red-600/30' 
+                          ? 'bg-white/10 border-white/25 text-white/80 hover:bg-white/15' 
                           : 'bg-white/10 border-white/40 text-white hover:bg-white/20'
                       }`}
                     >
@@ -4108,7 +4072,7 @@ Return only the improved idea, no additional commentary.`,
                     
                     <Button
                       onClick={endCall}
-                      className="w-12 h-12 rounded-full bg-red-600/20 border-red-500/40 text-red-400 hover:bg-red-600/30"
+                      className="w-12 h-12 rounded-full bg-white/10 border-white/25 text-white/80 hover:bg-white/15"
                     >
                       <Phone className="w-5 h-5 rotate-45" />
                     </Button>
@@ -4121,7 +4085,7 @@ Return only the improved idea, no additional commentary.`,
                   <Button
                     onClick={startCall}
                     disabled={isConnecting}
-                    className="flex-1 bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-600/40"
+                    className="flex-1 bg-white/10 text-white hover:bg-white/15 border border-white/25"
                   >
                     {isConnecting ? (
                       <>
@@ -4143,7 +4107,7 @@ Return only the improved idea, no additional commentary.`,
                   return reaction && (reaction.attention === 'ignore' || reaction.attention === 'partial') && (
                     <Button
                       onClick={() => addToFeedbackList(selectedPersona, reaction)}
-                      className="flex-1 bg-orange-600/20 text-orange-400 hover:bg-orange-600/30 border border-orange-600/40"
+                      className="flex-1 bg-white/10 text-white/80 hover:bg-white/15 border border-white/25"
                     >
                       <Check className="h-4 w-4 mr-2" />
                       Add to Feedback
@@ -4156,7 +4120,7 @@ Return only the improved idea, no additional commentary.`,
                   <Button
                     onClick={openFeedbackModal}
                     disabled={isGeneratingFeedback}
-                    className="flex-1 bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 border border-cyan-600/40"
+                    className="flex-1 bg-white/10 text-white/80 hover:bg-white/15 border border-white/25"
                   >
                     {isGeneratingFeedback ? (
                       <>
