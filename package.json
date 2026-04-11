@@ -44,6 +44,7 @@
     "motion": "^12.23.12",
     "next": "15.5.14",
     "playwright": "^1.55.0",
+    "postprocessing": "^6.39.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "reactflow": "^11.11.4",

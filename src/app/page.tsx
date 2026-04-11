@@ -15,6 +15,7 @@ import {
   AnnouncementTitle,
 } from "@/components/ui/kibo-ui/announcement";
 import { ArrowUpRightIcon, Globe, Megaphone, FileText } from "lucide-react";
+import Hyperspeed from "@/components/hyperspeed";
 
 // Square component for animated beam
 const Circle = React.forwardRef<
@@ -48,18 +49,19 @@ export default function Landing() {
   return (
     <>
       {/* Hero Section with GIF Background */}
-      <div
-        className="min-h-screen bg-black relative overflow-hidden"
-        style={{
-          backgroundImage: "url('/final.gif')",
-          backgroundSize: "cover",
-          backgroundPosition: "80% 50%",
-          backgroundRepeat: "no-repeat",
-          backgroundBlendMode: "exclusion",
-          backgroundAttachment: "fixed",
-        }}
-      >
-        <div className="absolute inset-0 z-0"></div>
+      <div className="min-h-screen bg-black relative overflow-hidden">
+        <Hyperspeed />
+        <div
+          className="absolute inset-0 z-[1] opacity-25"
+          style={{
+            backgroundImage: "url('/final.gif')",
+            backgroundSize: "cover",
+            backgroundPosition: "80% 50%",
+            backgroundRepeat: "no-repeat",
+            backgroundBlendMode: "screen",
+          }}
+        />
+        <div className="absolute inset-0 z-[2] bg-black/45" />
         <nav className="relative z-10 flex items-center py-6 px-8 w-full mx-auto bg-black/50">
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">

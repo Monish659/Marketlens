@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     console.log('🎯 [GENERATE-OPINIONS] Profiles count:', body.profiles?.length || 0);
     console.log('�� [GENERATE-OPINIONS] Idea preview:', body.idea?.substring(0, 50) + '...' || 'No idea');
     
-    const { idea, profiles } = body;
+    const { idea, profiles, scenarioContext } = body;
 
     if (!idea || !profiles || !Array.isArray(profiles)) {
       console.error('💥 [GENERATE-OPINIONS] Invalid input:', { 
@@ -41,14 +41,14 @@ export async function POST(request: NextRequest) {
           batch.map(async (profile: any) => {
             try {
               const opinion = await withTimeout(
-                generateOpinionWithCohere(profile, idea),
+                generateOpinionWithCohere(profile, idea, scenarioContext),
                 AI_TIMEOUT_MS,
                 `Cohere timeout for ${profile?.name || profile?.user_metadata?.name || 'persona'}`
               );
               return opinion;
             } catch (error) {
               console.warn(`⚠️ [GENERATE-OPINIONS] Falling back for ${profile?.name || profile?.user_metadata?.name || 'persona'}:`, error);
-              return generateFallbackOpinion(profile, idea);
+              return generateFallbackOpinion(profile, idea, scenarioContext);
             }
           })
         );
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     // Fill any missing entries (including profiles beyond AI sample limit) with fast fallback opinions.
     for (let i = 0; i < profiles.length; i++) {
       if (!opinions[i]) {
-        opinions[i] = generateFallbackOpinion(profiles[i], idea);
+        opinions[i] = generateFallbackOpinion(profiles[i], idea, scenarioContext);
       }
     }
 
@@ -116,7 +116,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: s
   }
 }
 
-async function generateOpinionWithCohere(profile: any, idea: string): Promise<any> {
+async function generateOpinionWithCohere(profile: any, idea: string, scenarioContext?: any): Promise<any> {
   // Extract persona data (handle both Auth0 user structure and direct persona structure)
   const personaData = profile.user_metadata || profile;
   
@@ -127,6 +127,15 @@ async function generateOpinionWithCohere(profile: any, idea: string): Promise<an
 
 PERSON PROFILE:
 ${profileDescription}
+
+MACRO SCENARIO (0-100, 50=neutral):
+${JSON.stringify(scenarioContext || {
+  inflation: 50,
+  marketRisk: 50,
+  geopoliticalStress: 50,
+  regulationStrictness: 50,
+  economicGrowth: 50
+}, null, 2)}
 
 IDEA TO ANALYZE:
 "${idea}"
@@ -151,6 +160,7 @@ Guidelines:
 - Be realistic based on their actual characteristics
 - Consider their professional background, age, interests, and lifestyle
 - Make the reason and comment sound natural and personal
+- For "ignore" and "partial" attention, provide constructive, specific rejection reasoning that helps improve the idea
 - NEVER mention names other than ${personaData.name} in your response`;
 
   try {
@@ -270,7 +280,7 @@ function createProfileDescription(personaData: any): string {
   return parts.join('\n');
 }
 
-function generateFallbackOpinion(profile: any, idea: string): any {
+function generateFallbackOpinion(profile: any, idea: string, scenarioContext?: any): any {
   // Simple fallback if Cohere fails
   const personaData = profile.user_metadata || profile;
   const random = Math.random();
@@ -280,20 +290,27 @@ function generateFallbackOpinion(profile: any, idea: string): any {
   let reason: string;
   let comment: string | undefined;
   
-  if (random > 0.7) {
+  const riskPenalty = ((scenarioContext?.marketRisk ?? 50) - 50) / 100;
+  const inflationPenalty = ((scenarioContext?.inflation ?? 50) - 50) / 120;
+  const growthBoost = ((scenarioContext?.economicGrowth ?? 50) - 50) / 100;
+  const scenarioShift = growthBoost - riskPenalty - inflationPenalty;
+  const adjusted = random + scenarioShift;
+
+  if (adjusted > 0.7) {
     attention = 'full';
-    sentiment = 0.7 + Math.random() * 0.3;
+    sentiment = Math.max(0.55, 0.7 + Math.random() * 0.3 + scenarioShift);
     reason = `This idea aligns well with ${personaData.title || 'their professional background'}`;
     comment = `This looks promising and could be very useful for someone like me.`;
-  } else if (random > 0.4) {
+  } else if (adjusted > 0.4) {
     attention = 'partial';
-    sentiment = 0.4 + Math.random() * 0.4;
-    reason = `Interesting concept, but would need to see more details`;
-    comment = `Could be useful depending on the implementation.`;
+    sentiment = Math.max(0.2, Math.min(0.7, 0.4 + Math.random() * 0.4 + scenarioShift));
+    reason = `Interesting concept, but missing concrete proof and clearer implementation detail`;
+    comment = `Could be useful if you show execution steps and measurable outcomes.`;
   } else {
     attention = 'ignore';
-    sentiment = Math.random() * 0.4;
-    reason = `Not quite what I'm looking for right now`;
+    sentiment = Math.max(0, Math.min(0.35, Math.random() * 0.35 + scenarioShift));
+    reason = `Not compelling enough yet because the practical value and risk reduction are unclear`;
+    comment = undefined;
   }
   
   return {

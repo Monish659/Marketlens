@@ -10,6 +10,7 @@ import useSessionStore from '@/stores/sessionStore';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Vapi from '@vapi-ai/web';
+import dynamic from 'next/dynamic';
 import { 
   ChevronDown, 
   Plus, 
@@ -37,8 +38,15 @@ import {
   MicOff,
   Volume2,
   Loader2,
-  Check
+  Check,
+  SlidersHorizontal,
+  Lock
 } from 'lucide-react';
+
+const ExplainChatbot = dynamic(
+  () => import('@/components/explain-chatbot').then((mod) => mod.ExplainChatbot),
+  { ssr: false }
+);
 
 interface Persona {
   interests: any;
@@ -256,12 +264,35 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const [showFeedback, setShowFeedback] = useState(false);
   const [improvedPrompt, setImprovedPrompt] = useState('');
   const [isGeneratingImprovedPrompt, setIsGeneratingImprovedPrompt] = useState(false);
+  const [callEngine, setCallEngine] = useState<'vapi' | 'browser' | null>(null);
+  const [showScenarioPanel, setShowScenarioPanel] = useState(false);
+  const [scenarioContext, setScenarioContext] = useState({
+    inflation: 50,
+    marketRisk: 50,
+    geopoliticalStress: 50,
+    regulationStrictness: 50,
+    economicGrowth: 50,
+  });
   
   const vapiRef = useRef<Vapi | null>(null);
+  const browserRecognitionRef = useRef<any | null>(null);
+  const browserCallActiveRef = useRef(false);
+  const browserConversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const callEngineRef = useRef<'vapi' | 'browser' | null>(null);
+  const isMutedRef = useRef(false);
+  const fallbackCallParamsRef = useRef<{ firstMessage: string; systemPrompt: string } | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const isGeneratingFeedbackRef = useRef<boolean>(false); // Add this ref
   const isGeneratingImprovedPromptRef = useRef<boolean>(false); // Add this ref for improved prompt
   const MIN_GLOBE_USERS = 25;
+
+  useEffect(() => {
+    callEngineRef.current = callEngine;
+  }, [callEngine]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   const getPersonaData = (persona: any) => persona?.user_metadata || persona || {};
   const getPersonaId = (persona: any, index = 0) => {
@@ -1052,6 +1083,36 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     });
   };
 
+  const applyScenarioContextToOpinions = (opinions: any[]) => {
+    const riskDrag = (scenarioContext.marketRisk - 50) / 100;
+    const inflationDrag = (scenarioContext.inflation - 50) / 120;
+    const geoDrag = (scenarioContext.geopoliticalStress - 50) / 130;
+    const regulationDrag = (scenarioContext.regulationStrictness - 50) / 120;
+    const growthBoost = (scenarioContext.economicGrowth - 50) / 100;
+
+    const netShift = growthBoost - riskDrag - inflationDrag - geoDrag - regulationDrag;
+
+    return opinions.map((opinion) => {
+      const baseSentiment = typeof opinion.sentiment === 'number' ? opinion.sentiment : 0.5;
+      const sentiment = Math.max(0, Math.min(1, baseSentiment + netShift));
+
+      let attention: 'full' | 'partial' | 'ignore' = opinion.attention || 'partial';
+      if (sentiment >= 0.7) attention = 'full';
+      else if (sentiment <= 0.38) attention = 'ignore';
+      else attention = 'partial';
+
+      const scenarioSummary = `Scenario: inflation ${scenarioContext.inflation}%, risk ${scenarioContext.marketRisk}%, geopolitics ${scenarioContext.geopoliticalStress}%, regulation ${scenarioContext.regulationStrictness}%, growth ${scenarioContext.economicGrowth}%`;
+      const reason = `${opinion.reason || 'Reaction adjusted by macro conditions.'} ${scenarioSummary}`;
+
+      return {
+        ...opinion,
+        sentiment,
+        attention,
+        reason,
+      };
+    });
+  };
+
   const generateOpinionsWithTimeout = async (profiles: any[]) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000);
@@ -1062,7 +1123,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idea: postContent,
-          profiles
+          profiles,
+          scenarioContext
         }),
         signal: controller.signal
       });
@@ -1114,7 +1176,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       console.log('✅ [ANALYSIS] Generated', opinions.length, 'opinions');
 
       // Run simulation with generated opinions
-      runGeneratedSimulation(opinions);
+      runGeneratedSimulation(applyScenarioContextToOpinions(opinions));
     } catch (error) {
       console.error('💥 [ANALYSIS] Error:', error);
 
@@ -1122,7 +1184,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       const fallbackOpinions = buildFallbackOpinions(selectedUsers);
       if (fallbackOpinions.length > 0) {
         setCurrentProcessingStep('Backend slow, using fast local simulation...');
-        runGeneratedSimulation(fallbackOpinions);
+        runGeneratedSimulation(applyScenarioContextToOpinions(fallbackOpinions));
         return;
       }
 
@@ -1383,7 +1445,7 @@ Improved idea:`,
       console.log('✅ [GLOBAL] Generated', opinions.length, 'opinions globally');
 
       // Run simulation with generated opinions
-      runGeneratedSimulation(opinions);
+      runGeneratedSimulation(applyScenarioContextToOpinions(opinions));
 
     } catch (error) {
       console.error('Error in global deployment:', error);
@@ -1391,7 +1453,7 @@ Improved idea:`,
       const fallbackOpinions = buildFallbackOpinions(deploymentUsers.length > 0 ? deploymentUsers : allUsers);
       if (fallbackOpinions.length > 0) {
         setCurrentProcessingStep('Backend slow, switching to local global simulation...');
-        runGeneratedSimulation(fallbackOpinions);
+        runGeneratedSimulation(applyScenarioContextToOpinions(fallbackOpinions));
         return;
       }
 
@@ -1920,6 +1982,7 @@ Improved idea:`,
       // Set up event listeners
       vapiRef.current.on('call-start', () => {
         console.log('Call started');
+        setCallEngine('vapi');
         setIsInCall(true);
         setIsConnecting(false);
         setConnectionStatus('connected');
@@ -1929,6 +1992,7 @@ Improved idea:`,
       vapiRef.current.on('call-end', () => {
         console.log('Call ended');
         setIsInCall(false);
+        setCallEngine(null);
         setConnectionStatus('idle');
         setTranscript(prev => [...prev, '📞 Call ended']);
       });
@@ -1969,6 +2033,12 @@ Improved idea:`,
         setConnectionStatus('error');
         setIsConnecting(false);
         setIsInCall(false);
+
+        if (callEngineRef.current !== 'browser' && fallbackCallParamsRef.current) {
+          void startBrowserVoiceFallback(fallbackCallParamsRef.current).catch((fallbackError) => {
+            console.error('Browser fallback start failed from Vapi error handler:', fallbackError);
+          });
+        }
       });
 
     } catch (err) {
@@ -1977,6 +2047,7 @@ Improved idea:`,
     }
 
     return () => {
+      stopBrowserVoiceFallback();
       if (vapiRef.current) {
         vapiRef.current.stop();
       }
@@ -2099,6 +2170,160 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     },
   });
 
+  const stopBrowserVoiceFallback = () => {
+    browserCallActiveRef.current = false;
+    fallbackCallParamsRef.current = null;
+    try {
+      if (browserRecognitionRef.current) {
+        browserRecognitionRef.current.onresult = null;
+        browserRecognitionRef.current.onerror = null;
+        browserRecognitionRef.current.onend = null;
+        browserRecognitionRef.current.stop();
+      }
+    } catch (error) {
+      console.warn('Failed to stop browser recognition cleanly:', error);
+    }
+    browserRecognitionRef.current = null;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  };
+
+  const speakFallbackText = (text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis || isMutedRef.current) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.warn('Failed to use browser speech synthesis:', error);
+    }
+  };
+
+  const generateFallbackAssistantReply = async (
+    userMessage: string,
+    systemPrompt: string
+  ) => {
+    const trimmedHistory = browserConversationRef.current.slice(-6);
+    const historyText = trimmedHistory
+      .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`)
+      .join('\n');
+
+    const prompt = `${systemPrompt}
+
+You are in a live voice conversation. Keep answers short, practical, and natural (max 2-3 sentences).
+
+Conversation so far:
+${historyText || 'No prior conversation.'}
+
+User: ${userMessage}
+Assistant:`;
+
+    try {
+      const response = await fetch('/api/cohere/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          maxTokens: 150,
+          temperature: 0.5,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      const generated = typeof data?.response === 'string' ? data.response.trim() : '';
+      if (generated) return generated;
+      return 'I need one more detail to give better feedback. Can you clarify your core value proposition?';
+    } catch (error) {
+      console.error('Fallback assistant generation failed:', error);
+      return 'I lost connection briefly. Can you repeat that?';
+    }
+  };
+
+  const startBrowserVoiceFallback = async (params: {
+    firstMessage: string;
+    systemPrompt: string;
+  }) => {
+    if (typeof window === 'undefined') {
+      throw new Error('Browser voice fallback unavailable on server');
+    }
+
+    const RecognitionCtor =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!RecognitionCtor) {
+      throw new Error('SpeechRecognition is not supported in this browser');
+    }
+
+    stopBrowserVoiceFallback();
+    browserCallActiveRef.current = true;
+    browserConversationRef.current = [];
+    setCallEngine('browser');
+    setIsInCall(true);
+    setIsConnecting(false);
+    setConnectionStatus('connected');
+    setError('Vapi unavailable. Switched to browser voice fallback mode.');
+
+    const recognition = new RecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = async (event: any) => {
+      if (!browserCallActiveRef.current) return;
+
+      let interim = '';
+      const finalMessages: string[] = [];
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcriptText = event.results[i][0]?.transcript || '';
+        if (event.results[i].isFinal) {
+          if (transcriptText.trim()) finalMessages.push(transcriptText.trim());
+        } else {
+          interim += transcriptText;
+        }
+      }
+
+      if (interim) {
+        setTranscription(interim);
+      }
+
+      for (const finalText of finalMessages) {
+        setTranscription('');
+        browserConversationRef.current.push({ role: 'user', content: finalText });
+        setTranscript((prev) => [...prev, `👤 You: ${finalText}`]);
+
+        const reply = await generateFallbackAssistantReply(finalText, params.systemPrompt);
+        browserConversationRef.current.push({ role: 'assistant', content: reply });
+        setTranscript((prev) => [...prev, `🤖 Assistant: ${reply}`]);
+        speakFallbackText(reply);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn('Browser voice fallback error:', event);
+    };
+
+    recognition.onend = () => {
+      if (browserCallActiveRef.current && !isMutedRef.current) {
+        try {
+          recognition.start();
+        } catch {
+          // no-op
+        }
+      }
+    };
+
+    browserRecognitionRef.current = recognition;
+    recognition.start();
+
+    setTranscript((prev) => [...prev, '🔁 Browser voice fallback connected']);
+    browserConversationRef.current.push({ role: 'assistant', content: params.firstMessage });
+    setTranscript((prev) => [...prev, `🤖 Assistant: ${params.firstMessage}`]);
+    speakFallbackText(params.firstMessage);
+  };
+
   // Call control functions
   const startCall = async () => {
     if (!vapiRef.current) {
@@ -2128,14 +2353,18 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
       } Want to hear why?` :
       'Hello! How can I help you today?';
 
-    try {
-      const assistantParams = {
-        name: getPersonaName(persona) || 'Assistant',
-        firstMessage,
-        systemPrompt:
-          systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
-      };
+    const assistantParams = {
+      name: getPersonaName(persona) || 'Assistant',
+      firstMessage,
+      systemPrompt:
+        systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
+    };
+    fallbackCallParamsRef.current = {
+      firstMessage: assistantParams.firstMessage,
+      systemPrompt: assistantParams.systemPrompt,
+    };
 
+    try {
       try {
         const assistantId = await getAssistantIdForCall(assistantParams);
         await vapiRef.current.start(assistantId as any);
@@ -2163,18 +2392,42 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
       } catch {
         diagnostics = '';
       }
-      setError(`${message}. ${hints}${diagnostics}`);
-      setIsConnecting(false);
-      setConnectionStatus('error');
+
+      try {
+        await startBrowserVoiceFallback({
+          firstMessage: assistantParams.firstMessage,
+          systemPrompt: assistantParams.systemPrompt,
+        });
+        setError(`Vapi unavailable (${message}). Browser fallback enabled.${diagnostics}`);
+        return;
+      } catch (fallbackError: any) {
+        const fallbackHint =
+          fallbackError?.message ||
+          'Browser fallback unavailable. Use Chrome and allow microphone access.';
+        setError(`${message}. ${hints}${diagnostics} Fallback error: ${fallbackHint}`);
+        setIsConnecting(false);
+        setConnectionStatus('error');
+      }
     }
   };
 
   const endCall = async () => {
+    if (callEngine === 'browser') {
+      stopBrowserVoiceFallback();
+      setIsInCall(false);
+      setCallEngine(null);
+      setConnectionStatus('idle');
+      setTranscription('');
+      return;
+    }
+
     if (!vapiRef.current) return;
 
     try {
       vapiRef.current.stop();
+      fallbackCallParamsRef.current = null;
       setIsInCall(false);
+      setCallEngine(null);
       setConnectionStatus('idle');
       setTranscription('');
     } catch (err) {
@@ -2183,13 +2436,44 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
   };
 
   const toggleMute = () => {
-    if (!vapiRef.current || !isInCall) return;
+    if (!isInCall) return;
+
+    if (callEngine === 'browser') {
+      const nextMuted = !isMuted;
+      isMutedRef.current = nextMuted;
+      setIsMuted(nextMuted);
+
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+
+      if (nextMuted && browserRecognitionRef.current) {
+        try {
+          browserRecognitionRef.current.stop();
+        } catch {
+          // no-op
+        }
+      }
+
+      if (!nextMuted && browserRecognitionRef.current && browserCallActiveRef.current) {
+        try {
+          browserRecognitionRef.current.start();
+        } catch {
+          // no-op
+        }
+      }
+      return;
+    }
+
+    if (!vapiRef.current) return;
     
     if (isMuted) {
       vapiRef.current.setMuted(false);
+      isMutedRef.current = false;
       setIsMuted(false);
     } else {
       vapiRef.current.setMuted(true);
+      isMutedRef.current = true;
       setIsMuted(true);
     }
   };
@@ -2564,6 +2848,10 @@ Return only the improved idea, no additional commentary.`,
                     <p className="text-xs text-white/60">{project.description}</p>
                   )}
                 </div>
+                <div className="px-2 py-1 border border-white/20 bg-white/5 text-[10px] font-mono uppercase tracking-wide text-white/70 flex items-center gap-1">
+                  <Lock className="h-3 w-3" />
+                  Private Simulation
+                </div>
               </div>
             )}
           </div>
@@ -2574,19 +2862,37 @@ Return only the improved idea, no additional commentary.`,
             <Badge variant="outline" className="text-xs">Canada</Badge>
             <Badge variant="outline" className="text-xs">Australia</Badge>
           </div> */}
-          <Button 
-            variant="ghost" 
-            className="text-xs hover:bg-white/5"
-            onClick={() => {}}
-          >
-            <Share2 className="h-3 w-3 mr-2" />
-            Share Simulation
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              className="text-xs hover:bg-white/5 border border-white/15"
+              onClick={() => {}}
+            >
+              <Share2 className="h-3 w-3 mr-2" />
+              Share
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs hover:bg-white/5 border border-white/15"
+              onClick={() => {}}
+            >
+              <FileText className="h-3 w-3 mr-2" />
+              Export
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs hover:bg-white/5 border border-white/15"
+              onClick={() => scheduleAutoSave()}
+            >
+              <Save className="h-3 w-3 mr-2" />
+              Save
+            </Button>
+          </div>
         </div>
 
         {/* Filter System Controls - Only show after prompt entered */}
         {hasEnteredPrompt && (
-          <div className="border-b border-white/10 p-4">
+          <div className="border-b border-white/10 p-4 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <span className="text-xs font-mono text-white/60 uppercase tracking-wider">Analysis Mode</span>
@@ -2604,7 +2910,7 @@ Return only the improved idea, no additional commentary.`,
                     disabled={!hasCompletedFirstAnalysis || isRunningAnalysis}
                     className={`px-3 py-1 text-xs font-mono border ${
                       hasCompletedFirstAnalysis && !isRunningAnalysis
-                        ? 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 border-blue-600/40'
+                        ? 'bg-white/10 text-white hover:bg-white/20 border-white/35'
                         : 'bg-gray-600/10 text-gray-500 border-gray-600/20 cursor-not-allowed'
                     }`}
                   >
@@ -2622,6 +2928,64 @@ Return only the improved idea, no additional commentary.`,
                   <span>{Math.max(0, allUsers.length - selectedUsers.length)} Other Users</span>
                 </div>
               </div>
+            </div>
+
+            <div className="border border-white/15 bg-black/40">
+              <button
+                type="button"
+                onClick={() => setShowScenarioPanel((v) => !v)}
+                className="w-full px-3 py-2 flex items-center justify-between text-xs font-mono text-white/80 hover:bg-white/5"
+              >
+                <span className="flex items-center gap-2">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Macro Scenario Simulator
+                </span>
+                <span className="text-white/50">{showScenarioPanel ? 'Hide' : 'Show'}</span>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {showScenarioPanel && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.22, ease: 'easeOut' }}
+                    className="overflow-hidden border-t border-white/10"
+                  >
+                    <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {[
+                        { key: 'inflation', label: 'Inflation' },
+                        { key: 'marketRisk', label: 'Market Risk' },
+                        { key: 'geopoliticalStress', label: 'Geopolitical Stress' },
+                        { key: 'regulationStrictness', label: 'Regulation Strictness' },
+                        { key: 'economicGrowth', label: 'Economic Growth' },
+                      ].map((item) => (
+                        <label key={item.key} className="text-xs font-mono text-white/80">
+                          <div className="flex items-center justify-between mb-1">
+                            <span>{item.label}</span>
+                            <span className="text-white/50">
+                              {(scenarioContext as any)[item.key]}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={(scenarioContext as any)[item.key]}
+                            onChange={(e) =>
+                              setScenarioContext((prev) => ({
+                                ...prev,
+                                [item.key]: Number(e.target.value),
+                              }))
+                            }
+                            className="w-full accent-white"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         )}
@@ -3677,6 +4041,17 @@ Return only the improved idea, no additional commentary.`,
                         {reaction.comment && (
                           <p className="text-white/60 italic">"{reaction.comment}"</p>
                         )}
+                        {(reaction.attention === 'ignore' || reaction.attention === 'partial') && (
+                          <div className="mt-3 p-2 border border-white/20 bg-white/5">
+                            <div className="text-[11px] uppercase tracking-wide text-white/60 mb-1">Why They Said No</div>
+                            <p className="text-white/85">
+                              {reaction.comment || reaction.reason || 'No detailed objection captured.'}
+                            </p>
+                            <p className="text-white/60 mt-1">
+                              Ask: "What would make this clearly valuable for you right now?"
+                            </p>
+                          </div>
+                        )}
                       </div>
                     ) : null;
                   })()}
@@ -3701,6 +4076,11 @@ Return only the improved idea, no additional commentary.`,
                         'bg-red-400'
                       }`}></div>
                       <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Live Call</span>
+                      {callEngine === 'browser' && (
+                        <span className="text-[10px] px-2 py-0.5 border border-white/30 text-white/70 font-mono">
+                          fallback
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-white/60 font-mono">{formatDuration(callDuration)}</span>
                   </div>
@@ -3808,6 +4188,7 @@ Return only the improved idea, no additional commentary.`,
           </motion.div>
         )}
       </AnimatePresence>
+      <ExplainChatbot idea={postContent || currentPost} reactions={reactions as any} />
     </>
   );
 }
