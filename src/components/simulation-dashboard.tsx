@@ -251,6 +251,23 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const isGeneratingFeedbackRef = useRef<boolean>(false); // Add this ref
   const isGeneratingImprovedPromptRef = useRef<boolean>(false); // Add this ref for improved prompt
 
+  const getPersonaData = (persona: any) => persona?.user_metadata || persona || {};
+  const getPersonaName = (persona: any) => {
+    const data = getPersonaData(persona);
+    return data.name || data.email?.split('@')[0] || 'User';
+  };
+  const getPersonaTitle = (persona: any) => {
+    const data = getPersonaData(persona);
+    return (
+      data.title ||
+      data.occupation ||
+      (data.professional?.seniority && data.professional?.primaryIndustry
+        ? `${data.professional.seniority} ${data.professional.primaryIndustry}`
+        : data.professional?.primaryIndustry) ||
+      'Professional'
+    );
+  };
+
   // Load session from URL on mount and fetch initial data
   useEffect(() => {
     if (projectId) {
@@ -268,8 +285,15 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       fetchProject();
     }
     
-    // Load personas from local JSON file (primary method)
-    loadLocalPersonas();
+    // Prefer live users first, then fall back to local personas.
+    const loadUsers = async () => {
+      const loadedLiveUsers = await loadRealAuth0Users();
+      if (!loadedLiveUsers) {
+        await loadLocalPersonas();
+      }
+    };
+
+    void loadUsers();
   }, [projectId, sessionId]);
 
   // Restore session state
@@ -512,14 +536,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     if (allUsers.length > 0 && globeDots.length === 0 && nichePersonaIds.length === 0) {
       console.log('🔍 [DEBUG] Initial globe dots setup for', allUsers.length, 'users');
       
-      // Show all loaded users (up to 700) as grey dots initially
+      // Show all loaded users as grey dots initially.
       const dots = allUsers.map(persona => {
-        // Only show @fake.com users
-        const email = persona.email || '';
-        if (!email.endsWith('@fake.com')) {
-          return null;
-        }
-        
         // Handle both Auth0 user structure (with user_metadata) and direct persona structure
         const personaData = persona.user_metadata || persona;
         
@@ -552,7 +570,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       }).filter(Boolean); // Remove null entries
       
       setGlobeDots(dots);
-      console.log(`🌍 [GLOBE] Displaying ${dots.length} @fake.com users as grey dots on globe`);
+      console.log(`🌍 [GLOBE] Displaying ${dots.length} live users as grey dots on globe`);
     }
   }, [allUsers.length, nichePersonaIds.length]); // Only depend on lengths to avoid unnecessary re-runs
 
@@ -560,10 +578,6 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   useEffect(() => {
     if (reactions.length > 0 && globeDots.length > 0) {
       const updatedDots = globeDots.map(dot => {
-        // Only process @fake.com users
-        const email = dot.persona?.email || '';
-        if (!email.endsWith('@fake.com')) return null;
-        
         const dotPersonaData = dot.persona?.user_metadata || dot.persona;
         
         if (!dotPersonaData?.personaId) return dot;
@@ -593,7 +607,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         
         // Keep existing color and size if no reaction
         return dot;
-      }).filter(Boolean); // Remove null entries for non-@fake.com users
+      });
       setGlobeDots(updatedDots);
     }
   }, [reactions, isGlobalDeployment]); // Depend on reactions and global deployment state
@@ -603,7 +617,6 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     if (isGlobalDeployment && allUsers.length > 0 && reactions.length === 0) {
       console.log('🌍 [GLOBAL] Setting up white dots for global deployment');
       const whiteDots = allUsers
-        .filter(user => user.email?.endsWith('@fake.com'))
         .map(user => {
           const persona = user.user_metadata || user;
           const coords = persona.location?.coordinates;
@@ -637,9 +650,9 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     }
   }, [isGlobalDeployment, allUsers.length]); // Only when entering/exiting global mode
 
-  // Load all real Auth0 users initially (greyed out)
-  const loadRealAuth0Users = async () => {
-    console.log('👥 [AUTH0-USERS] Loading real Auth0 users...');
+  // Load live users from backend (Auth0 first, Supabase fallback).
+  const loadRealAuth0Users = async (): Promise<boolean> => {
+    console.log('👥 [LIVE-USERS] Loading live users...');
     setIsLoadingGlobalUsers(true);
     
     try {
@@ -653,29 +666,29 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.users && data.users.length > 0) {
-          // Filter to only show users with @fake.com emails
-          const fakeUsers = data.users.filter((user: any) => {
-            const email = user.email || '';
-            return email.endsWith('@fake.com');
-          });
-          
-          console.log('✅ [AUTH0-USERS] Loaded', data.users.length, 'total users, filtered to', fakeUsers.length, '@fake.com users');
-          console.log('🌍 [AUTH0-USERS] Only @fake.com users will display on globe');
-          
-          setAllUsers(fakeUsers);
-          setPersonas(fakeUsers);
+          console.log(
+            '✅ [LIVE-USERS] Loaded',
+            data.users.length,
+            'users from source:',
+            data.source || 'auth0'
+          );
+
+          setAllUsers(data.users);
+          setPersonas(data.users);
+          return true;
         } else {
-          console.log('⚠️ [AUTH0-USERS] No real users found in Auth0 database');
+          console.log('⚠️ [LIVE-USERS] No live users found');
         }
       } else {
-        console.error('❌ [AUTH0-USERS] Failed to fetch users:', response.status);
+        console.error('❌ [LIVE-USERS] Failed to fetch users:', response.status);
       }
       
     } catch (error) {
-      console.error('💥 [AUTH0-USERS] Error loading users:', error);
+      console.error('💥 [LIVE-USERS] Error loading users:', error);
     } finally {
       setIsLoadingGlobalUsers(false);
     }
+    return false;
   };
 
   // Load personas from local JSON file (much faster than Auth0)
@@ -749,15 +762,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       
     } catch (error) {
       console.error('💥 [NICHE-SEARCH] Error:', error);
-      // Fallback: select first 5 @fake.com users with highest diversity
+      // Fallback: select 5 random loaded users
       const fallbackUsers = allUsers
-        .filter(user => {
-          const email = user.email || '';
-          return email.endsWith('@fake.com');
-        })
         .sort(() => Math.random() - 0.5) // Randomize for diversity
         .slice(0, 5);  // Change from 100 to 5
-      console.log('🔄 [NICHE-SEARCH] Using fallback: 5 random @fake.com users for diversity');
+      console.log('🔄 [NICHE-SEARCH] Using fallback: 5 random users for diversity');
       setSelectedUsers(fallbackUsers);
       return fallbackUsers;
     }
@@ -777,12 +786,6 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     }
     
     const dots = allUsers.map(persona => {
-      // Only show @fake.com users
-      const email = persona.email || '';
-      if (!email.endsWith('@fake.com')) {
-        return null;
-      }
-      
       const personaData = persona.user_metadata || persona;
       
       if (!personaData.personaId || !personaData.location?.coordinates) {
@@ -820,7 +823,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       };
     }).filter(dot => dot !== null);
     
-    console.log(`🌍 [UPDATE-GLOBE] Setting ${dots.length} @fake.com globe dots (${nicheIds.length} in niche)`);
+    console.log(`🌍 [UPDATE-GLOBE] Setting ${dots.length} live-user globe dots (${nicheIds.length} in niche)`);
     setGlobeDots(dots);
   };
 
@@ -1056,12 +1059,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       
       console.log('✅ [NICHE-PROFILES] Loaded profiles:', data.profiles.length);
       
-      // Convert to globe dots (filter for @fake.com only)
+      // Convert to globe dots for all returned profiles
       const nicheDots = data.profiles
-        .filter((profile: any) => {
-          const email = profile.email || '';
-          return email.endsWith('@fake.com');
-        })
         .map((profile: any) => ({
         id: profile.personaId,
         lat: profile.location.coordinates.coordinates[1],
@@ -1260,7 +1259,6 @@ Improved idea:`,
       
       // Update globe dots to show all users as WHITE for global deployment
       const allDots = allUsers
-        .filter(user => user.email?.endsWith('@fake.com'))
         .map(user => {
           const persona = user.user_metadata || user;
           const coords = persona.location?.coordinates;
@@ -3462,11 +3460,11 @@ Return only the improved idea, no additional commentary.`,
               className="bg-black border border-white/20 p-6 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-xl mb-4">{selectedPersona.name}</h2>
-              <div className="space-y-3 text-xs">
-                <div>
+              <h2 className="text-xl mb-4">{getPersonaName(selectedPersona)}</h2>
+                <div className="space-y-3 text-xs">
+                  <div>
                   <span className="text-white/60">Title:</span>
-                  <span className="ml-2">{selectedPersona.title}</span>
+                  <span className="ml-2">{getPersonaTitle(selectedPersona)}</span>
                 </div>
                 <div>
                   <span className="text-white/60">Location:</span>
@@ -3576,7 +3574,7 @@ Return only the improved idea, no additional commentary.`,
                     ) : (
                       <>
                         <Phone className="h-4 w-4 mr-2" />
-                        Call {selectedPersona.name.split(' ')[0]}
+                        Call {getPersonaName(selectedPersona).split(' ')[0]}
                       </>
                     )}
                   </Button>
