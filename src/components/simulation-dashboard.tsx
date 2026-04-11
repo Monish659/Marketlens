@@ -742,7 +742,23 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     setIsLoadingGlobalUsers(true);
     
     try {
-      const response = await fetch('/api/fetch-auth0-users?limit=700&real_users=true', {
+      const tokensRaw = localStorage.getItem('auth_tokens');
+      const userDataRaw = localStorage.getItem('user_data');
+      const parsedTokens = tokensRaw ? JSON.parse(tokensRaw) : null;
+      const parsedUserData = userDataRaw ? JSON.parse(userDataRaw) : null;
+      const excludeEmail =
+        parsedUserData?.email ||
+        parsedTokens?.email ||
+        parsedTokens?.user?.email ||
+        '';
+
+      const query = new URLSearchParams({
+        limit: '700',
+        real_users: 'true',
+      });
+      if (excludeEmail) query.set('exclude_email', excludeEmail);
+
+      const response = await fetch(`/api/fetch-auth0-users?${query.toString()}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -1944,8 +1960,12 @@ Improved idea:`,
 
       vapiRef.current.on('error', (error: any) => {
         console.error('Vapi error:', error);
-        const errorMessage = error?.error?.message || error?.message || 'An error occurred with Vapi';
-        setError(errorMessage);
+        const rawMessage = error?.error?.message || error?.message || 'An error occurred with Vapi';
+        const messageLower = String(rawMessage).toLowerCase();
+        const hint = messageLower.includes('failed to fetch')
+          ? 'Network blocked. Disable ad blockers/Brave shields, allow microphone access, and verify Vapi keys.'
+          : '';
+        setError(hint ? `${rawMessage}. ${hint}` : rawMessage);
         setConnectionStatus('error');
         setIsConnecting(false);
         setIsInCall(false);
@@ -2054,6 +2074,31 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     );
   };
 
+  const buildInlineAssistantConfig = (params: {
+    name?: string;
+    firstMessage?: string;
+    systemPrompt?: string;
+  }) => ({
+    name: params.name || 'MarketLens Persona Assistant',
+    firstMessage: params.firstMessage || 'Hi there. Tell me what feedback you want.',
+    model: {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            params.systemPrompt ||
+            'You are a helpful AI assistant. Keep responses conversational and concise.',
+        },
+      ],
+    },
+    voice: {
+      provider: 'openai',
+      voiceId: 'shimmer',
+    },
+  });
+
   // Call control functions
   const startCall = async () => {
     if (!vapiRef.current) {
@@ -2084,17 +2129,22 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
       'Hello! How can I help you today?';
 
     try {
-      const assistantId = await getAssistantIdForCall({
+      const assistantParams = {
         name: getPersonaName(persona) || 'Assistant',
         firstMessage,
         systemPrompt:
           systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
-      });
+      };
 
-      await vapiRef.current.start(assistantId as any);
-      
-      // Remove the auto-opening of feedback modal
-      
+      try {
+        const assistantId = await getAssistantIdForCall(assistantParams);
+        await vapiRef.current.start(assistantId as any);
+        return;
+      } catch (assistantError) {
+        console.warn('⚠️ [VAPI] Assistant-id flow failed, trying inline assistant config:', assistantError);
+      }
+
+      await vapiRef.current.start(buildInlineAssistantConfig(assistantParams) as any);
     } catch (err: any) {
       console.error('Failed to start call:', err);
       const message =
@@ -2103,9 +2153,17 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
         'Failed to start call';
       const hints =
         message.toLowerCase().includes('failed to fetch')
-          ? 'This is usually network/ad-block related. Try disabling blocker extensions or using Incognito.'
-          : 'Check VAPI_PRIVATE_KEY/VAPI_ASSISTANT_ID and mic permissions.';
-      setError(`${message}. ${hints}`);
+          ? 'This is usually network/ad-block related. Disable blocker extensions/Brave shields, allow mic permissions, and try Incognito.'
+          : 'Check NEXT_PUBLIC_VAPI_PUBLIC_KEY, VAPI_PRIVATE_KEY, and VAPI_ASSISTANT_ID.';
+      let diagnostics = '';
+      try {
+        const healthResponse = await fetch('/api/vapi/health');
+        const health = await healthResponse.json();
+        diagnostics = ` Diagnostics: publicKey=${health?.env?.hasPublicKey ? 'ok' : 'missing'}, privateKey=${health?.env?.hasPrivateKey ? 'ok' : 'missing'}, assistantId=${health?.env?.hasAssistantId ? 'set' : 'not-set'}, vapiStatus=${health?.network?.status ?? 'n/a'}.`;
+      } catch {
+        diagnostics = '';
+      }
+      setError(`${message}. ${hints}${diagnostics}`);
       setIsConnecting(false);
       setConnectionStatus('error');
     }

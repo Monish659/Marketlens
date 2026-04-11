@@ -1,25 +1,55 @@
-import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { NextResponse } from 'next/server';
+import bundledPersonas from '../../../../personas.json';
 
-export async function GET(request: NextRequest) {
-  console.log('📁 [PERSONAS-LOCAL] Loading personas from local JSON file');
+type PersonaRecord = {
+  personaId?: number | string;
+  name?: string;
+  email?: string;
+  [key: string]: any;
+};
+
+function normalizeBundledPersonas(input: PersonaRecord[]) {
+  return input.map((persona, index) => {
+    const data = persona.user_metadata || persona;
+    const name = data.name || persona.name || `Persona ${index + 1}`;
+    const safeEmail =
+      data.email ||
+      persona.email ||
+      `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '')}@marketlens.persona`;
+
+    const normalized = {
+      ...data,
+      personaId: data.personaId || index + 1,
+      name,
+      title: data.title || data.occupation || 'Professional',
+      email: safeEmail,
+    };
+
+    return {
+      ...normalized,
+      user_metadata: normalized,
+    };
+  });
+}
+
+export async function GET() {
+  console.log('📁 [PERSONAS-LOCAL] Loading bundled personas');
   
   try {
-    // Read personas.json from project root
-    const filePath = path.join(process.cwd(), 'personas.json');
-    const fileContent = fs.readFileSync(filePath, 'utf8');
-    const personas = JSON.parse(fileContent);
+    const personas = Array.isArray(bundledPersonas) ? bundledPersonas : [];
     
-    console.log('✅ [PERSONAS-LOCAL] Loaded', personas.length, 'personas from local file');
-    
-    // Add email field for compatibility with existing code
-    const personasWithEmail = personas.map((persona: any) => ({
-      ...persona,
-      email: `${persona.name.toLowerCase().replace(/\s+/g, '.')}@fake.com`
-    }));
-    
-    console.log('🌍 [PERSONAS-LOCAL] Added email fields to', personasWithEmail.length, 'personas');
+    if (personas.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'No personas bundled in deployment',
+        },
+        { status: 500 }
+      );
+    }
+
+    const personasWithEmail = normalizeBundledPersonas(personas as PersonaRecord[]);
+    console.log('✅ [PERSONAS-LOCAL] Loaded', personasWithEmail.length, 'bundled personas');
     
     return NextResponse.json({
       success: true,
@@ -32,7 +62,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { 
         success: false, 
-        error: 'Failed to load personas from local file',
+        error: 'Failed to load bundled personas',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
