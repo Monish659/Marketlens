@@ -247,6 +247,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(384); // w-96 = 24rem = 384px (original size)
   const [isResizingRight, setIsResizingRight] = useState<boolean>(false);
   const rightResizeRef = useRef<{ startX: number; startWidth: number }>({ startX: 0, startWidth: 384 });
+  const globeContainerRef = useRef<HTMLDivElement | null>(null);
+  const [globeRenderSize, setGlobeRenderSize] = useState<number>(640);
 
   const handleRightResizeMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     setIsResizingRight(true);
@@ -276,6 +278,25 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isResizingRight]);
+
+  useEffect(() => {
+    const container = globeContainerRef.current;
+    if (!container) return;
+
+    const computeSize = () => {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const next = Math.max(360, Math.min(700, width - 32, height - 32));
+      setGlobeRenderSize((prev) => (Math.abs(prev - next) > 2 ? next : prev));
+    };
+
+    computeSize();
+
+    const observer = new ResizeObserver(computeSize);
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, [rightSidebarWidth, sidebarCollapsed]);
   const [isSelectingNiche, setIsSelectingNiche] = useState(false);
   const [nicheInfo, setNicheInfo] = useState<any>(null);
   const [feedbackList, setFeedbackList] = useState<Array<{persona: Persona, reaction: any}>>([]);
@@ -598,6 +619,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         lon: coords.lon,
         color,
         size,
+        interactive: false,
         persona: user,
       };
     });
@@ -916,7 +938,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         return {
           ...dot,
           color,
-            size: 8 // Make reaction dots larger
+            size: 8, // Make reaction dots larger
+            interactive: true,
           };
         }
         
@@ -925,7 +948,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
           return {
             ...dot,
             color: '#ffffff',
-            size: 6
+            size: 6,
+            interactive: false,
           };
         }
         
@@ -1439,6 +1463,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
           lon: coords.lon,
           color: '#ffffff',
           size: 6, // Larger size for niche view
+          interactive: false,
           persona: profile
         };
       });
@@ -1492,9 +1517,12 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   };
 
   const handleDotClick = (dot: any) => {
-    if (dot.persona) {
-      setSelectedPersona(dot.persona);
-    }
+    if (!dot?.interactive) return;
+    const persona = dot.persona?.user_metadata || dot.persona;
+    const personaId = persona?.personaId || dot.id;
+    const hasReaction = reactions.some((reaction) => reaction.personaId === personaId);
+    if (!hasReaction || !dot.persona) return;
+    setSelectedPersona(dot.persona);
   };
 
   const initiatePersonaCall = (persona: Persona, reaction: Reaction) => {
@@ -1648,6 +1676,7 @@ Improved idea:`,
       const allDots = buildGlobeDotsFromUsers(deploymentUsers, { mode: 'global' }).map((dot) => ({
         ...dot,
         size: 8,
+        interactive: false,
       }));
       
       console.log('🌍 [GLOBAL] Created', allDots.length, 'dots for globe');
@@ -3034,6 +3063,15 @@ Return only the improved idea, no additional commentary.`,
           ← Projects View
         </Button>
 
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => window.location.href = '/'}
+          className="font-mono text-white/80 hover:text-white hover:bg-white/10 mb-3 justify-start"
+        >
+          ← Back To Home
+        </Button>
+
 
         <Button 
           onClick={handleCreateNewTest}
@@ -3205,14 +3243,22 @@ Return only the improved idea, no additional commentary.`,
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-xs font-mono text-white/60">
+              <div className="flex items-center gap-3 text-xs font-mono text-white/60 flex-wrap">
                 <div className="flex items-center gap-1">
-                  <div className="w-2 h-2 rounded-full bg-white"></div>
-                  <span>{selectedUsers.length} Selected Users</span>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <span>{metrics.fullAttention} Approve</span>
                 </div>
-                <div className="flex items-center gap-1 ml-4">
-                  <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                  <span>{Math.max(0, allUsers.length - selectedUsers.length)} Other Users</span>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
+                  <span>{metrics.partialAttention} Neutral</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                  <span>{metrics.ignored} Disapprove</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-gray-500"></div>
+                  <span>{Math.max(0, allUsers.length - reactions.length)} No Response</span>
                 </div>
               </div>
             </div>
@@ -3287,10 +3333,10 @@ Return only the improved idea, no additional commentary.`,
         {/* Main Grid */}
         <div className="flex-1 flex relative overflow-hidden">
           {/* Globe Area */}
-          <div className="flex-1 relative bg-black">
+          <div ref={globeContainerRef} className="flex-1 relative bg-black min-w-0">
             <div className="absolute inset-0 flex items-center justify-center">
               <ThreeJSGlobeWithDots 
-                size={640}
+                size={globeRenderSize}
                 color="#333333"
                 speed={0.003}
                 dots={globeDots}

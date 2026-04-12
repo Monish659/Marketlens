@@ -10,6 +10,7 @@ interface PersonaDot {
   lon: number;
   color: string;
   size: number;
+  interactive?: boolean;
   persona?: any;
 }
 
@@ -370,19 +371,28 @@ export function ThreeJSGlobeWithDots({
       dotsRef.current.push(dotMesh);
 
       // Create HTML overlay dot
+      const isInteractive = Boolean(dot.interactive);
       const htmlDot = document.createElement('div');
-      htmlDot.className = 'absolute pointer-events-auto cursor-pointer';
-      htmlDot.innerHTML = `
-        <div class="relative flex h-3 w-3">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background-color: ${dot.color}"></span>
-          <span class="relative inline-flex rounded-full h-3 w-3" style="background-color: ${dot.color}"></span>
-        </div>
-      `;
-      
-      htmlDot.addEventListener('click', (e) => {
-        e.stopPropagation();
-        stableOnDotClick(dot);
-      });
+      htmlDot.className = `absolute ${isInteractive ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none cursor-default'}`;
+      htmlDot.innerHTML = isInteractive
+        ? `
+          <div class="relative flex h-3 w-3">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background-color: ${dot.color}"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3" style="background-color: ${dot.color}"></span>
+          </div>
+        `
+        : `
+          <div class="relative flex h-2.5 w-2.5 opacity-75">
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5" style="background-color: ${dot.color}"></span>
+          </div>
+        `;
+
+      if (isInteractive) {
+        htmlDot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          stableOnDotClick(dot);
+        });
+      }
       
       overlayRef.current!.appendChild(htmlDot);
       htmlDotsRef.current.push(htmlDot);
