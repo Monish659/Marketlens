@@ -2494,13 +2494,12 @@ Target audience constraints:
 - Go-to-market: ${audienceConstraints.goToMarket}
 
 Instructions:
-- Be concise and conversational. Keep responses short (2-3 sentences max unless asked for details)
+- Be conversational, specific, and constructive when giving advice
 - You already know your feedback - don't rediscover it. Stand by your initial reaction
 - ${reaction.attention === 'ignore' ? "Explain why it doesn't interest you and what would need to change" : reaction.attention === 'partial' ? "Share your specific concerns and what would make you fully interested" : "Express your enthusiasm and ask about specific details that excite you"}
 - Speak naturally as a ${persona.demographics.gender?.toLowerCase() || 'professional'} from your generation would
 - Be direct but constructive. If skeptical, say why. If interested, say what caught your attention
 - Mention regional laws/economy/politics/socioeconomic realities when relevant
-- Don't over-explain. Wait for them to ask follow-ups
 - Always give direct feedback. Do not beat around the bush. Be honest and straightforward and how we can improve the idea based on your feedback.
 
 Remember: You've already formed your opinion. You're here to discuss it, not to be convinced otherwise (unless they address your specific concerns).`;
@@ -2562,15 +2561,53 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     });
   };
 
-  const buildLocalAdviceFallback = (persona: any, reaction: any) => {
+  const getAdviceVariant = (persona: any, reaction: any, idea: string) => {
+    const attention = reaction?.attention || 'partial';
+    const seedSource = `${getPersonaId(persona)}|${attention}|${idea || ''}|${reaction?.reason || ''}`;
+    let hash = 0;
+    for (let i = 0; i < seedSource.length; i += 1) {
+      hash = (hash * 31 + seedSource.charCodeAt(i)) >>> 0;
+    }
+
+    const banks: Record<string, string[]> = {
+      ignore: [
+        'focus on proving immediate practical value before scale',
+        'reduce risk exposure and simplify first-release scope',
+        'prioritize trust, compliance clarity, and operational reliability',
+      ],
+      partial: [
+        'tighten execution proof and measurable outcomes',
+        'improve positioning clarity and remove adoption friction',
+        'convert interest into commitment with concrete rollout milestones',
+      ],
+      full: [
+        'turn momentum into repeatable adoption',
+        'strengthen differentiation while preserving usability',
+        'move from excitement to measurable retention and ROI',
+      ],
+    };
+
+    const options = banks[attention] || banks.partial;
+    return options[hash % options.length];
+  };
+
+  const buildLocalAdviceFallback = (persona: any, reaction: any, idea: string) => {
     const personaName = getPersonaName(persona).split(' ')[0] || 'I';
+    const location = `${persona?.location?.city || 'their region'}, ${persona?.location?.country || 'their market'}`;
+    const title = getPersonaTitle(persona);
+    const industry = persona?.professional?.primaryIndustry || 'the target industry';
+    const reactionDetail = reaction?.comment || reaction?.reason || 'the value proposition is not concrete enough yet';
+    const macroLine = `With inflation at ${scenarioContext.inflation}% and regulation strictness at ${scenarioContext.regulationStrictness}%, buyers will prioritize clear risk control and proof of value.`;
+    const constraintsLine = `Given ${audienceConstraints.riskTolerance} risk tolerance, ${audienceConstraints.experience} experience, and ${audienceConstraints.budget || 'an undefined budget'}, your launch should stay focused and measurable.`;
+    const angle = getAdviceVariant(persona, reaction, idea);
+
     if (reaction?.attention === 'ignore') {
-      return `${personaName} suggests tightening the core value proposition, reducing implementation complexity, and proving immediate ROI with one concrete pilot use case. Address trust and adoption blockers first, then add advanced features.`;
+      return `${personaName}, a ${title} in ${location}, would likely reject this in ${industry} right now because ${reactionDetail}. ${macroLine} ${constraintsLine} First, narrow your offer to one high-friction use case and show a simple pilot with hard ROI targets. Then, address trust blockers with clear compliance, reliability guarantees, and implementation steps. Also keep ${angle}.`;
     }
     if (reaction?.attention === 'partial') {
-      return `${personaName} suggests clarifying the top user outcome, prioritizing one differentiating feature, and adding measurable success metrics. Keep the launch scope small and show practical execution milestones.`;
+      return `${personaName}, a ${title} in ${location}, sees potential but remains cautious because ${reactionDetail}. ${macroLine} ${constraintsLine} First, sharpen the core promise to one measurable user outcome and one differentiating feature. Then, publish a rollout plan with concrete milestones, pricing logic, and proof points from early users. Also ${angle}.`;
     }
-    return `${personaName} suggests keeping the strongest value points, adding clearer onboarding, and highlighting measurable impact in the first 30 days. Focus messaging on one concrete problem and one clear payoff.`;
+    return `${personaName}, a ${title} in ${location}, is positive on the concept in ${industry}, but expects disciplined execution because ${reactionDetail}. ${macroLine} ${constraintsLine} First, keep the strongest value proposition and make onboarding frictionless for your target persona. Then, track 30-day impact metrics and communicate wins in language tied to buyer priorities. Also ${angle}.`;
   };
 
   const generatePersonaVoiceAdvice = async (params: {
@@ -2579,16 +2616,48 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
     idea: string;
     systemPrompt: string;
   }) => {
-    const fallback = buildLocalAdviceFallback(params.persona, params.reaction);
+    const fallback = buildLocalAdviceFallback(params.persona, params.reaction, params.idea);
+    const personaName = getPersonaName(params.persona);
+    const title = getPersonaTitle(params.persona);
+    const location = `${params.persona?.location?.city || 'Unknown city'}, ${params.persona?.location?.country || 'Unknown country'}`;
+    const industry = params.persona?.professional?.primaryIndustry || 'Unknown industry';
+    const reactionText = params.reaction?.comment || params.reaction?.reason || 'No explicit objection provided';
+    const angle = getAdviceVariant(params.persona, params.reaction, params.idea);
+
     try {
       const prompt = `${params.systemPrompt}
 
-Task: Give one short voice advice response to the founder.
-- Output 2-3 concise sentences only.
+Task: Give one voice advice response to the founder that is meaningfully different to this persona and context.
+- Output 4-6 sentences (around 90-140 words).
 - No questions.
 - No roleplay labels.
-- Focus on actionable improvements based on objections.
-- Keep it natural for spoken delivery.
+- Keep it natural for spoken delivery and directly actionable.
+- In sentence 1, anchor on persona context (name, role, location).
+- Mention at least one specific objection from this reaction.
+- Mention at least one macro factor and one audience constraint.
+- End with a two-step plan using "First..." and "Then...".
+
+Persona:
+- Name: ${personaName}
+- Role: ${title}
+- Location: ${location}
+- Industry: ${industry}
+- Attention: ${params.reaction?.attention || 'partial'}
+- Reaction detail: ${reactionText}
+- Preferred improvement angle: ${angle}
+
+Audience constraints:
+- Budget: ${audienceConstraints.budget || 'not specified'}
+- Risk tolerance: ${audienceConstraints.riskTolerance}
+- Experience: ${audienceConstraints.experience}
+- Go-to-market: ${audienceConstraints.goToMarket}
+
+Macro context:
+- Inflation: ${scenarioContext.inflation}
+- Market risk: ${scenarioContext.marketRisk}
+- Geopolitical stress: ${scenarioContext.geopoliticalStress}
+- Regulation strictness: ${scenarioContext.regulationStrictness}
+- Economic growth: ${scenarioContext.economicGrowth}
 
 Idea:
 ${params.idea || 'No idea provided'}
@@ -2600,15 +2669,18 @@ Advice:`;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          maxTokens: 180,
-          temperature: 0.45,
+          maxTokens: 320,
+          temperature: 0.68,
         }),
       });
 
       const data = await response.json().catch(() => ({}));
       const generatedRaw = data?.text || data?.response || '';
       const generated = typeof generatedRaw === 'string' ? generatedRaw.trim() : '';
-      return generated || fallback;
+      if (!generated || generated.length < 260) {
+        return fallback;
+      }
+      return generated;
     } catch (error) {
       console.warn('Voice advice generation failed, using local fallback:', error);
       return fallback;
