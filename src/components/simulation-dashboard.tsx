@@ -1315,17 +1315,43 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
 
     const netShift = growthBoost - riskDrag - inflationDrag - geoDrag - regulationDrag;
 
-    return opinions.map((opinion) => {
+    const pickVariant = (seed: number, variants: string[]) => {
+      if (!variants.length) return '';
+      const index = Math.abs(seed) % variants.length;
+      return variants[index];
+    };
+
+    return opinions.map((opinion, index) => {
       const baseSentiment = typeof opinion.sentiment === 'number' ? opinion.sentiment : 0.5;
       const sentiment = Math.max(0, Math.min(1, baseSentiment + netShift));
+      const persona = opinion?.persona?.user_metadata || opinion?.persona || {};
 
       let attention: 'full' | 'partial' | 'ignore' = opinion.attention || 'partial';
       if (sentiment >= 0.7) attention = 'full';
       else if (sentiment <= 0.38) attention = 'ignore';
       else attention = 'partial';
 
-      const scenarioSummary = `Scenario: inflation ${scenarioContext.inflation}%, risk ${scenarioContext.marketRisk}%, geopolitics ${scenarioContext.geopoliticalStress}%, regulation ${scenarioContext.regulationStrictness}%, growth ${scenarioContext.economicGrowth}%`;
-      const reason = `${opinion.reason || 'Reaction adjusted by macro conditions.'} ${scenarioSummary}`;
+      const personaSeed = getPersonaId(persona, index);
+      const scenarioNote =
+        attention === 'full'
+          ? pickVariant(personaSeed, [
+              'Stable growth conditions make adoption easier here.',
+              'Current macro conditions still support near-term rollout in this market.',
+              'This region can absorb the launch risk under the current scenario.',
+            ])
+          : attention === 'partial'
+            ? pickVariant(personaSeed, [
+                'Macro pressure creates caution, so proof of ROI is important.',
+                'This market needs clearer risk controls before full adoption.',
+                'Adoption is possible, but confidence depends on execution clarity.',
+              ])
+            : pickVariant(personaSeed, [
+                'Current macro pressure amplifies skepticism in this segment.',
+                'This scenario makes the downside feel larger than the upside.',
+                'Without stronger mitigation, this market remains resistant right now.',
+              ]);
+
+      const reason = `${opinion.reason || 'Reaction adjusted by macro conditions.'} ${scenarioNote}`.trim();
 
       return {
         ...opinion,
@@ -3887,14 +3913,14 @@ Return only the improved idea, no additional commentary.`,
                   }}
                 />
 
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <input
                     value={audienceConstraints.budget}
                     onChange={(e) =>
                       setAudienceConstraints((prev) => ({ ...prev, budget: e.target.value }))
                     }
                     placeholder="Budget (optional)"
-                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                    className="h-11 bg-black border border-white/20 text-white/90 text-sm font-mono px-3 focus:border-white/40 focus:outline-none rounded-sm"
                   />
                   <select
                     value={audienceConstraints.riskTolerance}
@@ -3904,7 +3930,7 @@ Return only the improved idea, no additional commentary.`,
                         riskTolerance: e.target.value as RiskTolerance,
                       }))
                     }
-                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                    className="h-11 bg-black border border-white/20 text-white/90 text-sm font-mono px-3 focus:border-white/40 focus:outline-none rounded-sm"
                   >
                     <option value="low">Risk: Low</option>
                     <option value="medium">Risk: Medium</option>
@@ -3918,7 +3944,7 @@ Return only the improved idea, no additional commentary.`,
                         experience: e.target.value as ExperienceLevel,
                       }))
                     }
-                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                    className="h-11 bg-black border border-white/20 text-white/90 text-sm font-mono px-3 focus:border-white/40 focus:outline-none rounded-sm"
                   >
                     <option value="beginner">Experience: Beginner</option>
                     <option value="intermediate">Experience: Intermediate</option>
@@ -3932,7 +3958,7 @@ Return only the improved idea, no additional commentary.`,
                         goToMarket: e.target.value as GoToMarketMode,
                       }))
                     }
-                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                    className="h-11 bg-black border border-white/20 text-white/90 text-sm font-mono px-3 focus:border-white/40 focus:outline-none rounded-sm"
                   >
                     <option value="online">Launch: Online</option>
                     <option value="hybrid">Launch: Hybrid</option>
@@ -3947,7 +3973,7 @@ Return only the improved idea, no additional commentary.`,
                       }))
                     }
                     placeholder="Location (city/country)"
-                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                    className="h-11 bg-black border border-white/20 text-white/90 text-sm font-mono px-3 focus:border-white/40 focus:outline-none rounded-sm sm:col-span-2"
                   />
                 </div>
 

@@ -511,6 +511,12 @@ function isLocationMatch(personaData: any, targetLocation?: string) {
   return target.split(/[,\s]+/).some((token) => token.length > 2 && (city.includes(token) || country.includes(token)));
 }
 
+function pickVariantBySeed(seed: number, variants: string[]) {
+  if (!variants.length) return '';
+  const index = Math.abs(seed) % variants.length;
+  return variants[index];
+}
+
 function applyRegionalBehavior(
   opinion: any,
   profile: any,
@@ -520,6 +526,7 @@ function applyRegionalBehavior(
 ) {
   const persona = profile?.user_metadata || profile || {};
   const region = getRegionalContext(persona, constraints);
+  const personaSeed = Number(persona?.personaId || 0) || String(persona?.email || persona?.name || 'persona').length;
 
   const experienceModifier =
     constraints.experience === 'beginner' ? -0.08 :
@@ -545,15 +552,42 @@ function applyRegionalBehavior(
   else if (sentiment <= 0.36) attention = 'ignore';
   else attention = 'partial';
 
-  const reasoningTail = `Regional factors considered: laws (${region.laws}), economy (${region.economy}), politics (${region.politics}), socioeconomic context (${region.socioeconomic}).`;
-  const reason = `${opinion?.reason || 'No reason generated.'} ${reasoningTail}`.trim();
+  const locationLabel = `${persona?.location?.city || 'this city'}, ${persona?.location?.country || 'this country'}`;
+  const regionalTailByAttention =
+    attention === 'full'
+      ? pickVariantBySeed(personaSeed, [
+          `In ${locationLabel}, the local economy is favorable for trying this now.`,
+          `Local market behavior in ${locationLabel} supports earlier adoption.`,
+          `${locationLabel} has enough demand and infrastructure for this to land.`,
+        ])
+      : attention === 'partial'
+        ? pickVariantBySeed(personaSeed, [
+            `In ${locationLabel}, legal and pricing clarity will be needed before wider adoption.`,
+            `People in ${locationLabel} will want clearer risk controls and rollout detail.`,
+            `This can work in ${locationLabel}, but only with stronger practical proof.`,
+          ])
+        : pickVariantBySeed(personaSeed, [
+            `Current socioeconomic pressure in ${locationLabel} makes this feel non-essential.`,
+            `Given local constraints in ${locationLabel}, the downside feels higher than the upside.`,
+            `${locationLabel} is likely to reject this until the value is clearer and lower-risk.`,
+          ]);
+
+  const reason = `${opinion?.reason || 'No reason generated.'} ${regionalTailByAttention}`.trim();
   const comment =
     attention === 'ignore'
       ? undefined
-      : opinion?.comment ||
+      : (opinion?.comment && opinion.comment.trim()) ||
         (attention === 'partial'
-          ? 'Show region-specific proof, risk controls, and pricing fit to improve adoption.'
-          : 'Good potential here if execution remains localized and practical.');
+          ? pickVariantBySeed(personaSeed + 3, [
+              'Show one concrete local pilot and expected ROI.',
+              'Clarify pricing, compliance steps, and support model.',
+              'Give a realistic first rollout plan for this region.',
+            ])
+          : pickVariantBySeed(personaSeed + 7, [
+              'This looks viable if rollout stays practical and region-aware.',
+              'Strong start, especially if execution quality stays high.',
+              'Promising direction; move quickly with a focused pilot.',
+            ]));
 
   return {
     ...opinion,

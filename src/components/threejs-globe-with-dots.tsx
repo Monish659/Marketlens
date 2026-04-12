@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -130,9 +130,9 @@ export function ThreeJSGlobeWithDots({
   const controlsRef = useRef<OrbitControls | null>(null);
   const autoRotateRef = useRef<boolean>(true);
   const dotsRef = useRef<THREE.Mesh[]>([]);
-  const htmlDotsRef = useRef<HTMLDivElement[]>([]);
-  const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
-  const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
+  const htmlDotsRef = useRef<Array<HTMLDivElement | null>>([]);
+  const speedRef = useRef<number>(speed);
+  const sizeRef = useRef<number>(size);
   const initializedRef = useRef<boolean>(false);
 
   // Memoize the stable callback to prevent unnecessary re-renders
@@ -140,8 +140,13 @@ export function ThreeJSGlobeWithDots({
     onDotClick?.(dot);
   }, [onDotClick]);
 
-  // Memoize dots comparison to prevent unnecessary updates
-  const dotsString = useMemo(() => JSON.stringify(dots), [dots]);
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
+
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
 
   const latLonToVector3 = (lat: number, lon: number, radius: number) => {
     const phi = (90 - lat) * (Math.PI / 180);
@@ -175,6 +180,7 @@ export function ThreeJSGlobeWithDots({
       antialias: true, 
       alpha: true 
     });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(size, size);
     renderer.setClearColor(new THREE.Color(0x000000), 0);
     renderer.domElement.style.display = 'block';
@@ -297,7 +303,7 @@ export function ThreeJSGlobeWithDots({
       animationIdRef.current = requestAnimationFrame(animate);
       controls.update();
       if (globeRef.current && autoRotateRef.current) {
-        globeRef.current.rotation.y += speed;
+        globeRef.current.rotation.y += speedRef.current;
       }
       updateHtmlDotPositions();
       renderer.render(scene, camera);
@@ -327,14 +333,23 @@ export function ThreeJSGlobeWithDots({
         (dot.material as THREE.Material).dispose();
       });
       htmlDotsRef.current.forEach(htmlDot => {
-        if (htmlDot.parentNode) {
+        if (htmlDot && htmlDot.parentNode) {
           htmlDot.parentNode.removeChild(htmlDot);
         }
       });
       renderer.dispose();
       initializedRef.current = false;
     };
-  }, [size, color, speed]); // Removed dots and onDotClick from dependencies
+  }, [color]); // Initialize once per visual style change
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !camera) return;
+    renderer.setSize(size, size);
+    camera.aspect = 1;
+    camera.updateProjectionMatrix();
+  }, [size]);
 
   // Separate effect for updating dots only
   useEffect(() => {
@@ -372,32 +387,26 @@ export function ThreeJSGlobeWithDots({
 
       // Create HTML overlay dot
       const isInteractive = Boolean(dot.interactive);
-      const htmlDot = document.createElement('div');
-      htmlDot.className = `absolute ${isInteractive ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none cursor-default'}`;
-      htmlDot.innerHTML = isInteractive
-        ? `
+      if (isInteractive) {
+        const htmlDot = document.createElement('div');
+        htmlDot.className = 'absolute pointer-events-auto cursor-pointer';
+        htmlDot.innerHTML = `
           <div class="relative flex h-3 w-3">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background-color: ${dot.color}"></span>
-            <span class="relative inline-flex rounded-full h-3 w-3" style="background-color: ${dot.color}"></span>
-          </div>
-        `
-        : `
-          <div class="relative flex h-2.5 w-2.5 opacity-75">
-            <span class="relative inline-flex rounded-full h-2.5 w-2.5" style="background-color: ${dot.color}"></span>
+            <span class="absolute -inset-0.5 inline-flex rounded-full opacity-35" style="background-color: ${dot.color}"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 border border-black/30" style="background-color: ${dot.color}"></span>
           </div>
         `;
-
-      if (isInteractive) {
         htmlDot.addEventListener('click', (e) => {
           e.stopPropagation();
           stableOnDotClick(dot);
         });
+        overlayRef.current!.appendChild(htmlDot);
+        htmlDotsRef.current.push(htmlDot);
+      } else {
+        htmlDotsRef.current.push(null);
       }
-      
-      overlayRef.current!.appendChild(htmlDot);
-      htmlDotsRef.current.push(htmlDot);
     });
-  }, [dotsString, stableOnDotClick]); // Use stringified dots for comparison
+  }, [dots, stableOnDotClick]);
 
   // Function to update HTML dot positions
   const updateHtmlDotPositions = () => {
@@ -411,8 +420,9 @@ export function ThreeJSGlobeWithDots({
       dotMesh.getWorldPosition(vector);
       vector.project(cameraRef.current!);
       
-      const x = (vector.x * 0.5 + 0.5) * size;
-      const y = (vector.y * -0.5 + 0.5) * size;
+      const renderSize = sizeRef.current;
+      const x = (vector.x * 0.5 + 0.5) * renderSize;
+      const y = (vector.y * -0.5 + 0.5) * renderSize;
       
       const distance = cameraRef.current!.position.distanceTo(dotMesh.position);
       const globeCenter = new THREE.Vector3(0, 0, 0);
