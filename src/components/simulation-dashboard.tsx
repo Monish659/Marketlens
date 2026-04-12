@@ -8,7 +8,6 @@ import { ThreeJSGlobeWithDots } from "@/components/threejs-globe-with-dots";
 import useSessionStore from '@/stores/sessionStore';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Vapi from '@vapi-ai/web';
 import dynamic from 'next/dynamic';
 import { secureFetch } from '@/lib/secure-fetch';
 import { getVoiceProfile } from '@/lib/voice-profile';
@@ -38,8 +37,7 @@ import {
   Save,
   AlertCircle,
   Trash2,
-  Mic,
-  MicOff,
+  VolumeX,
   Volume2,
   Loader2,
   Check,
@@ -341,7 +339,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const [showFeedback, setShowFeedback] = useState(false);
   const [improvedPrompt, setImprovedPrompt] = useState('');
   const [isGeneratingImprovedPrompt, setIsGeneratingImprovedPrompt] = useState(false);
-  const [callEngine, setCallEngine] = useState<'vapi' | 'browser' | null>(null);
+  const [callEngine, setCallEngine] = useState<'browser' | null>(null);
   const [showScenarioPanel, setShowScenarioPanel] = useState(false);
   const [scenarioContext, setScenarioContext] = useState({
     inflation: 50,
@@ -353,21 +351,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const [audienceConstraints, setAudienceConstraints] = useState<AudienceConstraints>(DEFAULT_AUDIENCE_CONSTRAINTS);
   const [marketRecommendation, setMarketRecommendation] = useState<MarketRecommendation>(null);
   
-  const vapiRef = useRef<Vapi | null>(null);
-  const browserRecognitionRef = useRef<any | null>(null);
-  const browserCallActiveRef = useRef(false);
-  const browserConversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const callEngineRef = useRef<'vapi' | 'browser' | null>(null);
   const isMutedRef = useRef(false);
-  const fallbackCallParamsRef = useRef<{ firstMessage: string; systemPrompt: string } | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const isGeneratingFeedbackRef = useRef<boolean>(false); // Add this ref
   const isGeneratingImprovedPromptRef = useRef<boolean>(false); // Add this ref for improved prompt
   const MIN_GLOBE_USERS = 25;
-
-  useEffect(() => {
-    callEngineRef.current = callEngine;
-  }, [callEngine]);
 
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -2380,90 +2368,10 @@ Improved idea:`,
 
   const impactScore = Math.round((fullPercent * 2 + partialPercent) / 2);
 
-  // Initialize Vapi
+  // Cleanup one-way browser voice playback.
   useEffect(() => {
-    const publicKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
-    
-    if (!publicKey || publicKey === 'your_vapi_public_key_here') {
-      setError('Please add your Vapi public key to the environment variables');
-      return;
-    }
-
-    try {
-      vapiRef.current = new Vapi(publicKey);
-      
-      // Set up event listeners
-      vapiRef.current.on('call-start', () => {
-        console.log('Call started');
-        setCallEngine('vapi');
-        setIsInCall(true);
-        setIsConnecting(false);
-        setConnectionStatus('connected');
-        setTranscript(prev => [...prev, '📞 Call started']);
-      });
-
-      vapiRef.current.on('call-end', () => {
-        console.log('Call ended');
-        setIsInCall(false);
-        setCallEngine(null);
-        setConnectionStatus('idle');
-        setTranscript(prev => [...prev, '📞 Call ended']);
-      });
-
-      vapiRef.current.on('speech-start', () => {
-        console.log('User started speaking');
-        setTranscript(prev => [...prev, '🎤 User speaking...']);
-      });
-
-      vapiRef.current.on('speech-end', () => {
-        console.log('User stopped speaking');
-      });
-
-      vapiRef.current.on('message', (message: any) => {
-        console.log('Message received:', message);
-        if (message.type === 'transcript') {
-          const speaker = message.role === 'user' ? '👤 You' : '🤖 Assistant';
-          const newTranscript = `${speaker}: ${message.transcript}`;
-          setTranscript(prev => [...prev, newTranscript]);
-          setTranscription(message.transcript); // Update live transcription
-          
-          // REMOVED: Don't generate feedback during the call
-          // if (message.role === 'assistant' && message.transcript) {
-          //   const fullConversation = [...transcript, newTranscript].join(' ');
-          //   generateFeedbackSummary(fullConversation);
-          // }
-        }
-      });
-
-      vapiRef.current.on('error', (error: any) => {
-        console.error('Vapi error:', error);
-        const rawMessage = error?.error?.message || error?.message || 'An error occurred with Vapi';
-        const messageLower = String(rawMessage).toLowerCase();
-        const hint = messageLower.includes('failed to fetch')
-          ? 'Network blocked. Disable ad blockers/Brave shields, allow microphone access, and verify Vapi keys.'
-          : '';
-        setError(hint ? `${rawMessage}. ${hint}` : rawMessage);
-        setConnectionStatus('error');
-        setIsConnecting(false);
-        setIsInCall(false);
-
-        if (callEngineRef.current !== 'browser' && fallbackCallParamsRef.current) {
-          void startBrowserVoiceFallback(fallbackCallParamsRef.current).catch((fallbackError) => {
-            console.error('Browser fallback start failed from Vapi error handler:', fallbackError);
-          });
-        }
-      });
-
-    } catch (err) {
-      console.error('Failed to initialize Vapi:', err);
-      setError('Failed to initialize voice agent');
-    }
-
     return () => {
       stopBrowserVoiceFallback();
-      if (vapiRef.current) {
-        vapiRef.current.stop();
-      }
     };
   }, []);
 
@@ -2529,101 +2437,7 @@ Instructions:
 Remember: You've already formed your opinion. You're here to discuss it, not to be convinced otherwise (unless they address your specific concerns).`;
   };
 
-  const getAssistantIdForCall = async (params: {
-    name?: string;
-    firstMessage?: string;
-    systemPrompt?: string;
-    persona?: any;
-  }) => {
-    const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
-    if (
-      directAssistantId &&
-      directAssistantId !== 'your_vapi_assistant_id_here'
-    ) {
-      return directAssistantId;
-    }
-
-    const endpoints = ['/api/voice-assistant', '/api/vapi/assistant'];
-    const errors: string[] = [];
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await secureFetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
-        });
-
-        const data = await response.json().catch(() => null);
-        if (response.ok && data?.success && data?.assistantId) {
-          return data.assistantId as string;
-        }
-
-        errors.push(
-          `${endpoint}: ${data?.error || data?.details?.message || response.statusText}`
-        );
-      } catch (error) {
-        errors.push(
-          `${endpoint}: ${error instanceof Error ? error.message : 'Network error'}`
-        );
-      }
-    }
-
-    throw new Error(
-      `Unable to prepare voice assistant. ${errors.join(' | ')}`
-    );
-  };
-
-  const buildInlineAssistantConfig = (params: {
-    name?: string;
-    firstMessage?: string;
-    systemPrompt?: string;
-    persona?: any;
-  }) => {
-    const voiceProfile = getVoiceProfile({
-      persona: params.persona,
-      forcedProvider: process.env.NEXT_PUBLIC_VAPI_VOICE_PROVIDER,
-      forcedVoiceId: process.env.NEXT_PUBLIC_VAPI_VOICE_ID,
-      forcedLanguage: process.env.NEXT_PUBLIC_VAPI_TRANSCRIBER_LANGUAGE,
-    });
-
-    return {
-      name: params.name || 'MarketLens Persona Assistant',
-      firstMessage: params.firstMessage || 'Hi there. Tell me what feedback you want.',
-      model: {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content:
-              params.systemPrompt ||
-              'You are a helpful AI assistant. Keep responses conversational and concise.',
-          },
-        ],
-      },
-      transcriber: voiceProfile.transcriber,
-      voice: {
-        provider: voiceProfile.provider,
-        voiceId: voiceProfile.voiceId,
-      },
-    };
-  };
-
   const stopBrowserVoiceFallback = () => {
-    browserCallActiveRef.current = false;
-    fallbackCallParamsRef.current = null;
-    try {
-      if (browserRecognitionRef.current) {
-        browserRecognitionRef.current.onresult = null;
-        browserRecognitionRef.current.onerror = null;
-        browserRecognitionRef.current.onend = null;
-        browserRecognitionRef.current.stop();
-      }
-    } catch (error) {
-      console.warn('Failed to stop browser recognition cleanly:', error);
-    }
-    browserRecognitionRef.current = null;
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -2654,60 +2468,81 @@ Remember: You've already formed your opinion. You're here to discuss it, not to 
   };
 
   const speakFallbackText = (text: string, persona?: any) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis || isMutedRef.current) return;
-    try {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.96;
-      utterance.pitch = 1.02;
-      utterance.volume = 1;
-      const voice = pickBrowserVoice(persona);
-      if (voice) {
-        utterance.voice = voice;
-        if (voice.lang) utterance.lang = voice.lang;
-      }
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.warn('Failed to use browser speech synthesis:', error);
+    if (typeof window === 'undefined' || !window.speechSynthesis || isMutedRef.current) {
+      return Promise.resolve();
     }
+
+    return new Promise<void>((resolve) => {
+      try {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.96;
+        utterance.pitch = 1.02;
+        utterance.volume = 1;
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+        const voice = pickBrowserVoice(persona);
+        if (voice) {
+          utterance.voice = voice;
+          if (voice.lang) utterance.lang = voice.lang;
+        }
+        window.speechSynthesis.speak(utterance);
+      } catch (error) {
+        console.warn('Failed to use browser speech synthesis:', error);
+        resolve();
+      }
+    });
   };
 
-  const generateFallbackAssistantReply = async (
-    userMessage: string,
-    systemPrompt: string
-  ) => {
-    const trimmedHistory = browserConversationRef.current.slice(-6);
-    const historyText = trimmedHistory
-      .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`)
-      .join('\n');
+  const buildLocalAdviceFallback = (persona: any, reaction: any) => {
+    const personaName = getPersonaName(persona).split(' ')[0] || 'I';
+    if (reaction?.attention === 'ignore') {
+      return `${personaName} suggests tightening the core value proposition, reducing implementation complexity, and proving immediate ROI with one concrete pilot use case. Address trust and adoption blockers first, then add advanced features.`;
+    }
+    if (reaction?.attention === 'partial') {
+      return `${personaName} suggests clarifying the top user outcome, prioritizing one differentiating feature, and adding measurable success metrics. Keep the launch scope small and show practical execution milestones.`;
+    }
+    return `${personaName} suggests keeping the strongest value points, adding clearer onboarding, and highlighting measurable impact in the first 30 days. Focus messaging on one concrete problem and one clear payoff.`;
+  };
 
-    const prompt = `${systemPrompt}
-
-You are in a live voice conversation. Keep answers short, practical, and natural (max 2-3 sentences).
-
-Conversation so far:
-${historyText || 'No prior conversation.'}
-
-User: ${userMessage}
-Assistant:`;
-
+  const generatePersonaVoiceAdvice = async (params: {
+    persona: any;
+    reaction: any;
+    idea: string;
+    systemPrompt: string;
+  }) => {
+    const fallback = buildLocalAdviceFallback(params.persona, params.reaction);
     try {
+      const prompt = `${params.systemPrompt}
+
+Task: Give one short voice advice response to the founder.
+- Output 2-3 concise sentences only.
+- No questions.
+- No roleplay labels.
+- Focus on actionable improvements based on objections.
+- Keep it natural for spoken delivery.
+
+Idea:
+${params.idea || 'No idea provided'}
+
+Advice:`;
+
       const response = await secureFetch('/api/cohere/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          maxTokens: 150,
-          temperature: 0.5,
+          maxTokens: 180,
+          temperature: 0.45,
         }),
       });
 
       const data = await response.json().catch(() => ({}));
-      const generated = typeof data?.response === 'string' ? data.response.trim() : '';
-      if (generated) return generated;
-      return 'I need one more detail to give better feedback. Can you clarify your core value proposition?';
+      const generatedRaw = data?.text || data?.response || '';
+      const generated = typeof generatedRaw === 'string' ? generatedRaw.trim() : '';
+      return generated || fallback;
     } catch (error) {
-      console.error('Fallback assistant generation failed:', error);
-      return 'I lost connection briefly. Can you repeat that?';
+      console.warn('Voice advice generation failed, using local fallback:', error);
+      return fallback;
     }
   };
 
@@ -2715,95 +2550,36 @@ Assistant:`;
     firstMessage: string;
     systemPrompt: string;
     persona?: any;
+    reaction?: any;
   }) => {
     if (typeof window === 'undefined') {
       throw new Error('Browser voice fallback unavailable on server');
     }
 
-    const RecognitionCtor =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!RecognitionCtor) {
-      throw new Error('SpeechRecognition is not supported in this browser');
-    }
-
     stopBrowserVoiceFallback();
-    browserCallActiveRef.current = true;
-    browserConversationRef.current = [];
     setCallEngine('browser');
     setIsInCall(true);
     setIsConnecting(false);
     setConnectionStatus('connected');
-    setError('Vapi unavailable. Switched to browser voice fallback mode.');
+    setError(null);
 
-    const recognition = new RecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = getVoiceProfile({ persona: params.persona }).transcriber.language || 'en-US';
+    const advice = await generatePersonaVoiceAdvice({
+      persona: params.persona,
+      reaction: params.reaction,
+      idea: currentPost || postContent,
+      systemPrompt: params.systemPrompt,
+    });
 
-    recognition.onresult = async (event: any) => {
-      if (!browserCallActiveRef.current) return;
-
-      let interim = '';
-      const finalMessages: string[] = [];
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcriptText = event.results[i][0]?.transcript || '';
-        if (event.results[i].isFinal) {
-          if (transcriptText.trim()) finalMessages.push(transcriptText.trim());
-        } else {
-          interim += transcriptText;
-        }
-      }
-
-      if (interim) {
-        setTranscription(interim);
-      }
-
-      for (const finalText of finalMessages) {
-        setTranscription('');
-        browserConversationRef.current.push({ role: 'user', content: finalText });
-        setTranscript((prev) => [...prev, `👤 You: ${finalText}`]);
-
-        const reply = await generateFallbackAssistantReply(finalText, params.systemPrompt);
-        browserConversationRef.current.push({ role: 'assistant', content: reply });
-        setTranscript((prev) => [...prev, `🤖 Assistant: ${reply}`]);
-        speakFallbackText(reply, params.persona);
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.warn('Browser voice fallback error:', event);
-    };
-
-    recognition.onend = () => {
-      if (browserCallActiveRef.current && !isMutedRef.current) {
-        try {
-          recognition.start();
-        } catch {
-          // no-op
-        }
-      }
-    };
-
-    browserRecognitionRef.current = recognition;
-    recognition.start();
-
-    setTranscript((prev) => [...prev, '🔁 Browser voice fallback connected']);
-    browserConversationRef.current.push({ role: 'assistant', content: params.firstMessage });
-    setTranscript((prev) => [...prev, `🤖 Assistant: ${params.firstMessage}`]);
-    speakFallbackText(params.firstMessage, params.persona);
-  };
-
-  const ensureMicrophonePermission = async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((track) => track.stop());
+    const assistantLabel = params.persona ? getPersonaName(params.persona).split(' ')[0] : 'Advisor';
+    setTranscript((prev) => [...prev, '📞 Advice call started', `🤖 ${assistantLabel}: ${advice}`]);
+    setTranscription(advice);
+    await speakFallbackText(advice, params.persona);
   };
 
   // Call control functions
   const startCall = async () => {
-    if (!vapiRef.current) {
-      setError('Voice agent not initialized');
+    if (!selectedPersona) {
+      setError('Select a persona before starting advice');
       return;
     }
 
@@ -2835,135 +2611,42 @@ Assistant:`;
       systemPrompt:
         systemPrompt || 'You are a helpful AI assistant. Keep responses conversational and concise.',
       persona,
-    };
-    fallbackCallParamsRef.current = {
-      firstMessage: assistantParams.firstMessage,
-      systemPrompt: assistantParams.systemPrompt,
+      reaction,
     };
 
     try {
-      await ensureMicrophonePermission();
-
-      const directAssistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
-      if (
-        directAssistantId &&
-        directAssistantId !== 'your_vapi_assistant_id_here'
-      ) {
-        await vapiRef.current.start(directAssistantId as any);
-        return;
-      }
-
-      try {
-        await vapiRef.current.start(buildInlineAssistantConfig(assistantParams) as any);
-        return;
-      } catch (inlineError) {
-        console.warn('⚠️ [VAPI] Inline assistant start failed, trying server-created assistant:', inlineError);
-      }
-
-      const assistantId = await getAssistantIdForCall(assistantParams);
-      await vapiRef.current.start(assistantId as any);
+      await startBrowserVoiceFallback({
+        firstMessage: assistantParams.firstMessage,
+        systemPrompt: assistantParams.systemPrompt,
+        persona: assistantParams.persona,
+        reaction: assistantParams.reaction,
+      });
     } catch (err: any) {
       console.error('Failed to start call:', err);
-      const message =
-        err?.error?.message ||
-        err?.message ||
-        'Failed to start call';
-      const hints =
-        message.toLowerCase().includes('failed to fetch')
-          ? 'This is usually network/ad-block related. Disable blocker extensions/Brave shields, allow mic permissions, and try Incognito.'
-          : 'Check NEXT_PUBLIC_VAPI_PUBLIC_KEY, VAPI_PRIVATE_KEY, and VAPI_ASSISTANT_ID.';
-      let diagnostics = '';
-      try {
-        const healthResponse = await secureFetch('/api/vapi/health');
-        const health = await healthResponse.json();
-        diagnostics = ` Diagnostics: publicKey=${health?.env?.hasPublicKey ? 'ok' : 'missing'}, privateKey=${health?.env?.hasPrivateKey ? 'ok' : 'missing'}, assistantId=${health?.env?.hasAssistantId ? 'set' : 'not-set'}, vapiStatus=${health?.network?.status ?? 'n/a'}.`;
-      } catch {
-        diagnostics = '';
-      }
-
-      try {
-        await startBrowserVoiceFallback({
-          firstMessage: assistantParams.firstMessage,
-          systemPrompt: assistantParams.systemPrompt,
-          persona: assistantParams.persona,
-        });
-        setError(`Vapi unavailable (${message}). Browser fallback enabled.${diagnostics}`);
-        return;
-      } catch (fallbackError: any) {
-        const fallbackHint =
-          fallbackError?.message ||
-          'Browser fallback unavailable. Use Chrome and allow microphone access.';
-        setError(`${message}. ${hints}${diagnostics} Fallback error: ${fallbackHint}`);
-        setIsConnecting(false);
-        setConnectionStatus('error');
-      }
+      const message = err?.message || 'Failed to start advice call';
+      setError(message);
+      setIsConnecting(false);
+      setConnectionStatus('error');
     }
   };
 
   const endCall = async () => {
-    if (callEngine === 'browser') {
-      stopBrowserVoiceFallback();
-      setIsInCall(false);
-      setCallEngine(null);
-      setConnectionStatus('idle');
-      setTranscription('');
-      return;
-    }
-
-    if (!vapiRef.current) return;
-
-    try {
-      vapiRef.current.stop();
-      fallbackCallParamsRef.current = null;
-      setIsInCall(false);
-      setCallEngine(null);
-      setConnectionStatus('idle');
-      setTranscription('');
-    } catch (err) {
-      console.error('Failed to end call:', err);
-    }
+    stopBrowserVoiceFallback();
+    setIsInCall(false);
+    setCallEngine(null);
+    setConnectionStatus('idle');
+    setTranscription('');
   };
 
   const toggleMute = () => {
     if (!isInCall) return;
 
-    if (callEngine === 'browser') {
-      const nextMuted = !isMuted;
-      isMutedRef.current = nextMuted;
-      setIsMuted(nextMuted);
+    const nextMuted = !isMuted;
+    isMutedRef.current = nextMuted;
+    setIsMuted(nextMuted);
 
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
-
-      if (nextMuted && browserRecognitionRef.current) {
-        try {
-          browserRecognitionRef.current.stop();
-        } catch {
-          // no-op
-        }
-      }
-
-      if (!nextMuted && browserRecognitionRef.current && browserCallActiveRef.current) {
-        try {
-          browserRecognitionRef.current.start();
-        } catch {
-          // no-op
-        }
-      }
-      return;
-    }
-
-    if (!vapiRef.current) return;
-    
-    if (isMuted) {
-      vapiRef.current.setMuted(false);
-      isMutedRef.current = false;
-      setIsMuted(false);
-    } else {
-      vapiRef.current.setMuted(true);
-      isMutedRef.current = true;
-      setIsMuted(true);
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
     }
   };
 
@@ -4492,21 +4175,21 @@ Return only the improved idea, no additional commentary.`,
                         connectionStatus === 'connecting' ? 'bg-white/70 animate-pulse' :
                         'bg-white/40'
                       }`}></div>
-                      <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Live Call</span>
+                      <span className="text-xs font-mono text-white/80 uppercase tracking-wider">Voice Advice</span>
                       {callEngine === 'browser' && (
                         <span className="text-[10px] px-2 py-0.5 border border-white/30 text-white/70 font-mono">
-                          fallback
+                          one-way
                         </span>
                       )}
                     </div>
                     <span className="text-xs text-white/60 font-mono">{formatDuration(callDuration)}</span>
                   </div>
                   
-                  {/* Live Transcription - Fixed Height */}
+                  {/* One-way Advice Text */}
                   <div className="bg-black/40 border border-white/20 p-3 rounded mb-3 h-[80px] overflow-y-auto">
-                    <div className="text-xs text-white/60 mb-2 font-mono">LIVE TRANSCRIPTION:</div>
+                    <div className="text-xs text-white/60 mb-2 font-mono">ADVICE:</div>
                     <div className="text-sm text-white/80 font-mono leading-relaxed">
-                      {transcription || 'Waiting for speech...'}
+                      {transcription || 'Preparing advice...'}
                     </div>
                   </div>
                   
@@ -4520,7 +4203,7 @@ Return only the improved idea, no additional commentary.`,
                           : 'bg-white/10 border-white/40 text-white hover:bg-white/20'
                       }`}
                     >
-                      {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                      {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </Button>
                     
                     <Button
@@ -4543,12 +4226,12 @@ Return only the improved idea, no additional commentary.`,
                     {isConnecting ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Connecting...
+                        Preparing Advice...
                       </>
                     ) : (
                       <>
                         <Phone className="h-4 w-4 mr-2" />
-                        Call {getPersonaName(selectedPersona).split(' ')[0]}
+                        Call {getPersonaName(selectedPersona).split(' ')[0]} For Advice
                       </>
                     )}
                   </Button>
