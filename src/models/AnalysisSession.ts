@@ -25,6 +25,20 @@ export interface IAnalysisSession extends Document {
     reactions: any[]; // Store all reactions
     insights: any; // Store generated insights
     nicheInfo: any; // Store niche information
+    audienceConstraints?: {
+      budget?: string;
+      riskTolerance?: string;
+      experience?: string;
+      location?: string;
+      goToMarket?: string;
+    };
+    marketRecommendation?: {
+      mode?: string;
+      bestCity?: string;
+      bestCountry?: string;
+      reason?: string;
+      confidence?: number;
+    } | null;
   };
   
   // UI state
@@ -68,7 +82,9 @@ const AnalysisSessionSchema = new Schema<IAnalysisSession>({
     globeDots: { type: [Schema.Types.Mixed], default: [] },
     reactions: { type: [Schema.Types.Mixed], default: [] },
     insights: { type: Schema.Types.Mixed, default: null },
-    nicheInfo: { type: Schema.Types.Mixed, default: null }
+    nicheInfo: { type: Schema.Types.Mixed, default: null },
+    audienceConstraints: { type: Schema.Types.Mixed, default: null },
+    marketRecommendation: { type: Schema.Types.Mixed, default: null }
   },
   
   uiState: {

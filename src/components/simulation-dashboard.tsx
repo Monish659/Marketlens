@@ -103,6 +103,39 @@ interface SimulationMetrics {
 }
 
 type SimulationType = 'project-idea' | 'linkedin' | 'instagram' | 'twitter' | 'tiktok' | 'article' | 'website' | 'ad' | 'email' | 'email-subject' | 'product';
+type RiskTolerance = 'low' | 'medium' | 'high';
+type ExperienceLevel = 'beginner' | 'intermediate' | 'expert';
+type GoToMarketMode = 'online' | 'hybrid' | 'offline';
+
+type AudienceConstraints = {
+  budget: string;
+  riskTolerance: RiskTolerance;
+  experience: ExperienceLevel;
+  location: string;
+  goToMarket: GoToMarketMode;
+};
+
+type MarketRecommendation = {
+  mode: GoToMarketMode;
+  bestCity: string;
+  bestCountry: string;
+  reason: string;
+  confidence: number;
+} | null;
+
+const DEFAULT_AUDIENCE_CONSTRAINTS: AudienceConstraints = {
+  budget: '',
+  riskTolerance: 'medium',
+  experience: 'intermediate',
+  location: 'Global',
+  goToMarket: 'online',
+};
+
+const ATTENTION_COLORS: Record<'full' | 'partial' | 'ignore', string> = {
+  full: '#22c55e',
+  partial: '#facc15',
+  ignore: '#ef4444',
+};
 
 export function SimulationDashboard({ user, projectId }: { user: any; projectId?: string }) {
   // Session management
@@ -276,11 +309,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     regulationStrictness: 50,
     economicGrowth: 50,
   });
-  const [audienceConstraints, setAudienceConstraints] = useState({
-    budget: '',
-    riskTolerance: 'balanced',
-    preferredRegion: 'global',
-  });
+  const [audienceConstraints, setAudienceConstraints] = useState<AudienceConstraints>(DEFAULT_AUDIENCE_CONSTRAINTS);
+  const [marketRecommendation, setMarketRecommendation] = useState<MarketRecommendation>(null);
   
   const vapiRef = useRef<Vapi | null>(null);
   const browserRecognitionRef = useRef<any | null>(null);
@@ -316,6 +346,114 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     { city: 'Cape Town', country: 'South Africa' },
     { city: 'London', country: 'United Kingdom' },
   ];
+
+  const normalizeLocationToken = (value?: string | null) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\s,-]/g, '');
+
+  const inferGoToMarketMode = (idea: string, mode?: GoToMarketMode): GoToMarketMode => {
+    if (mode) return mode;
+    const content = idea.toLowerCase();
+    if (/\b(online|global|web|mobile app|saas|digital|ecommerce|marketplace)\b/.test(content)) {
+      return 'online';
+    }
+    if (/\b(hybrid|online and offline|phygital)\b/.test(content)) {
+      return 'hybrid';
+    }
+    return 'offline';
+  };
+
+  const isLocationMatch = (persona: any, targetLocation?: string) => {
+    const normalizedTarget = normalizeLocationToken(targetLocation);
+    if (!normalizedTarget || normalizedTarget === 'global' || normalizedTarget === 'worldwide') return true;
+    const data = persona?.user_metadata || persona || {};
+    const city = normalizeLocationToken(data?.location?.city);
+    const country = normalizeLocationToken(data?.location?.country);
+    if (city.includes(normalizedTarget) || country.includes(normalizedTarget)) return true;
+    return normalizedTarget
+      .split(/[,\s]+/)
+      .filter((token) => token.length > 2)
+      .some((token) => city.includes(token) || country.includes(token));
+  };
+
+  const filterUsersByLocationConstraint = (users: any[], targetLocation: string) => {
+    const normalizedTarget = normalizeLocationToken(targetLocation);
+    if (!normalizedTarget || normalizedTarget === 'global' || normalizedTarget === 'worldwide') {
+      return users;
+    }
+
+    const exactMatches = users.filter((user) => {
+      const persona = user?.user_metadata || user;
+      const city = normalizeLocationToken(persona?.location?.city);
+      const country = normalizeLocationToken(persona?.location?.country);
+      return city.includes(normalizedTarget) || country.includes(normalizedTarget);
+    });
+
+    // Ensure we still have enough diversity for simulation if target location has low coverage.
+    if (exactMatches.length >= 15) return exactMatches;
+
+    const regionalMatches = users.filter((user) => {
+      const persona = user?.user_metadata || user;
+      const city = normalizeLocationToken(persona?.location?.city);
+      const country = normalizeLocationToken(persona?.location?.country);
+      return normalizedTarget.split(/[,\s]+/).some((token) => token.length > 2 && (city.includes(token) || country.includes(token)));
+    });
+
+    const merged = mergeUserPools(exactMatches, regionalMatches);
+    return merged.length > 0 ? merged : users;
+  };
+
+  const computeMarketRecommendationFromReactions = (
+    nextReactions: any[],
+    constraints: AudienceConstraints,
+    idea: string
+  ): MarketRecommendation => {
+    const goToMarket = inferGoToMarketMode(idea, constraints.goToMarket);
+    if (goToMarket !== 'online') return null;
+
+    const regionScores = new Map<string, { city: string; country: string; score: number; samples: number }>();
+
+    for (const reaction of nextReactions) {
+      const persona = reaction?.persona?.user_metadata || reaction?.persona || {};
+      const city = String(persona?.location?.city || 'Unknown');
+      const country = String(persona?.location?.country || 'Unknown');
+      const key = `${city}|${country}`;
+      const current = regionScores.get(key) || { city, country, score: 0, samples: 0 };
+      const attentionWeight =
+        reaction.attention === 'full' ? 1.2 :
+        reaction.attention === 'partial' ? 0.35 : -0.8;
+      const sentimentWeight = (typeof reaction.sentiment === 'number' ? reaction.sentiment : 0.5) - 0.5;
+      current.score += attentionWeight + sentimentWeight;
+      current.samples += 1;
+      regionScores.set(key, current);
+    }
+
+    const ranked = Array.from(regionScores.values())
+      .filter((region) => region.samples > 0)
+      .sort((a, b) => (b.score / b.samples) - (a.score / a.samples));
+
+    const best = ranked[0];
+    if (!best) return null;
+
+    const normalizedScore = Math.max(0, Math.min(1, (best.score / best.samples + 1.5) / 3));
+    const confidence = Number(normalizedScore.toFixed(2));
+    const riskText =
+      constraints.riskTolerance === 'low'
+        ? 'low-risk buyer sentiment'
+        : constraints.riskTolerance === 'high'
+          ? 'high-upside adoption behavior'
+          : 'balanced adoption behavior';
+
+    return {
+      mode: 'online',
+      bestCity: best.city,
+      bestCountry: best.country,
+      reason: `${best.city}, ${best.country} has the strongest approval-to-rejection ratio in this run, with ${riskText} and high practical fit for your audience constraints.`,
+      confidence,
+    };
+  };
 
   const getPersonaData = (persona: any) => persona?.user_metadata || persona || {};
   const getPersonaId = (persona: any, index = 0) => {
@@ -513,13 +651,17 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setGlobeDots(analysisState.globeDots || []);
       setInsights(analysisState.insights);
       setNicheInfo(analysisState.nicheInfo);
-      setAudienceConstraints(
-        analysisState.audienceConstraints || {
-          budget: '',
-          riskTolerance: 'balanced',
-          preferredRegion: 'global',
-        }
-      );
+      const restoredConstraints: any = {
+        ...DEFAULT_AUDIENCE_CONSTRAINTS,
+        ...(analysisState.audienceConstraints || {}),
+      };
+
+      if (restoredConstraints.riskTolerance === 'balanced') {
+        restoredConstraints.riskTolerance = 'medium';
+      }
+
+      setAudienceConstraints(restoredConstraints as AudienceConstraints);
+      setMarketRecommendation(analysisState.marketRecommendation || null);
       
       // Set hasEnteredPrompt based on current selectedUsers state, not restored state
       const currentSelectedUsers = selectedUsers.length > 0 ? selectedUsers : (analysisState.selectedUsers || []);
@@ -577,6 +719,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
               nicheInfo,
               nichePersonaIds,
               audienceConstraints,
+              marketRecommendation,
             },
             uiState: {
               viewMode,
@@ -607,6 +750,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         nicheInfo,
         nichePersonaIds,
         audienceConstraints,
+        marketRecommendation,
       };
 
       const uiState = {
@@ -624,7 +768,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   }, [
     selectedUsers, reactions, metrics, globeDots, insights, nicheInfo,
     viewMode, selectedPersona, selectedType, 
-    processedPersonas, currentProcessingStep, hasEnteredPrompt, audienceConstraints
+    processedPersonas, currentProcessingStep, hasEnteredPrompt, audienceConstraints, marketRecommendation
   ]);
 
   // Create new session when starting analysis
@@ -681,10 +825,9 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setCurrentProcessingStep('');
       setProcessedPersonas(0);
       setAudienceConstraints({
-        budget: '',
-        riskTolerance: 'balanced',
-        preferredRegion: 'global',
+        ...DEFAULT_AUDIENCE_CONSTRAINTS,
       });
+      setMarketRecommendation(null);
       
       // Set default simulation type to project-idea
       setSelectedType('project-idea');
@@ -769,12 +912,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         
         if (reaction) {
           // Color based on reaction - override any previous color
-          const color =
-            reaction.attention === 'full'
-              ? '#ffffff'
-              : reaction.attention === 'partial'
-                ? '#bdbdbd'
-                : '#5f5f5f';
+          const color = ATTENTION_COLORS[reaction.attention as 'full' | 'partial' | 'ignore'] || '#facc15';
         return {
           ...dot,
           color,
@@ -958,9 +1096,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           niche: nicheData.niche,
-          users: allUsers,
+          users: filterUsersByLocationConstraint(allUsers, audienceConstraints.location),
           prompt: prompt,
-          limit: 25
+          limit: 25,
+          targetLocation: audienceConstraints.location,
+          audienceConstraints,
         })
       });
       
@@ -1027,6 +1167,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     try {
       console.log('🔍 [NICHE-SEARCH] Finding niche personas for:', postContent);
+      const targetLocation = audienceConstraints.location?.trim() || 'Global';
+      const locationCandidates = filterUsersByLocationConstraint(allUsers, targetLocation);
       
       const tokens = localStorage.getItem('auth_tokens');
       if (!tokens) {
@@ -1054,9 +1196,11 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           niche: nicheData.niche,
-          users: allUsers,
+          users: locationCandidates,
           prompt: postContent,
-          limit: 25
+          limit: 25,
+          targetLocation,
+          audienceConstraints,
         })
       });
 
@@ -1078,7 +1222,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       setNicheInfo({
         nicheDescription: nicheData.niche,
         totalSelected: data.totalSelected,
-        averageRelevanceScore: data.averageRelevanceScore
+        averageRelevanceScore: data.averageRelevanceScore,
+        targetLocation,
       });
       
       setSelectedUsers(data.selectedUsers);
@@ -1102,6 +1247,8 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     return profiles.map((profile: any, index: number) => {
       const persona = profile.user_metadata || profile;
       const personaName = getPersonaName(persona) || `User ${index + 1}`;
+      const personaCountry = String(persona?.location?.country || 'their region');
+      const matchesTargetLocation = isLocationMatch(persona, audienceConstraints.location);
       const random = Math.random();
 
       let attention: 'full' | 'partial' | 'ignore' = 'partial';
@@ -1120,16 +1267,16 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         sentiment,
         reason:
           attention === 'full'
-            ? `This feels directly relevant to ${personaName}.`
+            ? `This feels directly relevant to ${personaName} in ${personaCountry}, especially given current socioeconomic and adoption conditions.`
             : attention === 'partial'
-              ? `${personaName} sees potential, but wants more clarity before committing.`
-              : `${personaName} does not see enough immediate value right now.`,
+              ? `${personaName} sees potential, but wants clearer proof on regulation, affordability, and local execution before committing.`
+              : `${personaName} does not see enough immediate value right now because regional constraints and practical rollout details are unclear.`,
         comment:
           attention === 'ignore'
             ? undefined
             : attention === 'full'
-              ? 'I like the concept, but I want a clearer rollout plan.'
-              : 'Interesting idea. Show me the first practical use case.',
+              ? `I like the concept. Show a launch plan for ${matchesTargetLocation ? audienceConstraints.location : personaCountry} with measurable outcomes.`
+              : `Interesting idea, but explain exactly how it works for ${personaCountry} users with ${audienceConstraints.riskTolerance} risk tolerance.`,
         persona: profile
       };
     });
@@ -1165,7 +1312,9 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     });
   };
 
-  const generateOpinionsWithTimeout = async (profiles: any[]) => {
+  const generateOpinionsWithTimeout = async (
+    profiles: any[]
+  ): Promise<{ opinions: any[]; marketRecommendation: MarketRecommendation }> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000);
 
@@ -1189,7 +1338,10 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
         throw new Error(data?.error || 'Failed to generate opinions');
       }
 
-      return data.opinions;
+      return {
+        opinions: data.opinions,
+        marketRecommendation: data.marketRecommendation || null,
+      };
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1212,6 +1364,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     setIsRunningAnalysis(true);
     setIsSimulating(true);
+    setMarketRecommendation(null);
     setProcessedPersonas(0);
     setReactions([]);
     setMetrics({
@@ -1227,11 +1380,15 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     try {
       console.log('🚀 [ANALYSIS] Running sentiment analysis on', selectedUsers.length, 'users');
 
-      const opinions = await generateOpinionsWithTimeout(selectedUsers);
+      const analysisResult = await generateOpinionsWithTimeout(selectedUsers);
+      const opinions = analysisResult.opinions;
       console.log('✅ [ANALYSIS] Generated', opinions.length, 'opinions');
 
       // Run simulation with generated opinions
-      runGeneratedSimulation(applyScenarioContextToOpinions(opinions));
+      runGeneratedSimulation(
+        applyScenarioContextToOpinions(opinions),
+        analysisResult.marketRecommendation
+      );
     } catch (error) {
       console.error('💥 [ANALYSIS] Error:', error);
 
@@ -1239,7 +1396,10 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       const fallbackOpinions = buildFallbackOpinions(selectedUsers);
       if (fallbackOpinions.length > 0) {
         setCurrentProcessingStep('Backend slow, using fast local simulation...');
-        runGeneratedSimulation(applyScenarioContextToOpinions(fallbackOpinions));
+        runGeneratedSimulation(
+          applyScenarioContextToOpinions(fallbackOpinions),
+          computeMarketRecommendationFromReactions(fallbackOpinions, audienceConstraints, postContent)
+        );
         return;
       }
 
@@ -1465,6 +1625,7 @@ Improved idea:`,
     setIsGlobalDeployment(true);
     setIsRunningAnalysis(true);
     setIsSimulating(true);
+    setMarketRecommendation(null);
     setProcessedPersonas(0);
     setReactions([]); // Clear previous reactions
     // Don't clear feedbackList in global mode
@@ -1496,11 +1657,15 @@ Improved idea:`,
       // Generate opinions for ALL users (global deployment)
       console.log('🌍 [GLOBAL] Running analysis on', deploymentUsers.length, 'users globally');
       
-      const opinions = await generateOpinionsWithTimeout(deploymentUsers);
+      const analysisResult = await generateOpinionsWithTimeout(deploymentUsers);
+      const opinions = analysisResult.opinions;
       console.log('✅ [GLOBAL] Generated', opinions.length, 'opinions globally');
 
       // Run simulation with generated opinions
-      runGeneratedSimulation(applyScenarioContextToOpinions(opinions));
+      runGeneratedSimulation(
+        applyScenarioContextToOpinions(opinions),
+        analysisResult.marketRecommendation
+      );
 
     } catch (error) {
       console.error('Error in global deployment:', error);
@@ -1508,7 +1673,10 @@ Improved idea:`,
       const fallbackOpinions = buildFallbackOpinions(deploymentUsers.length > 0 ? deploymentUsers : allUsers);
       if (fallbackOpinions.length > 0) {
         setCurrentProcessingStep('Backend slow, switching to local global simulation...');
-        runGeneratedSimulation(applyScenarioContextToOpinions(fallbackOpinions));
+        runGeneratedSimulation(
+          applyScenarioContextToOpinions(fallbackOpinions),
+          computeMarketRecommendationFromReactions(fallbackOpinions, audienceConstraints, postContent)
+        );
         return;
       }
 
@@ -1569,7 +1737,10 @@ Improved idea:`,
   // Removed old content analysis functions - now using API-generated responses
 
   // Simulation with generated profiles and opinions
-  const runGeneratedSimulation = (opinions: any[]) => {
+  const runGeneratedSimulation = (
+    opinions: any[],
+    apiRecommendation?: MarketRecommendation
+  ) => {
     console.log('🚀 [SIMULATION] Running simulation with generated opinions');
     
     // Reset notification tracking
@@ -1608,6 +1779,11 @@ Improved idea:`,
             'Consider targeting early adopters first'
           ]
         });
+
+        const recommendation =
+          apiRecommendation ||
+          computeMarketRecommendationFromReactions(currentReactions, audienceConstraints, currentPost || postContent);
+        setMarketRecommendation(recommendation);
         return;
       }
       
@@ -2144,12 +2320,27 @@ The user pitched: "${currentPost}"
 
 Your reaction: You gave it ${reaction.attention} attention. ${reaction.comment ? `You thought: "${reaction.comment}"` : `Your reason: ${reaction.reason}`}
 
+Current macro context:
+- Inflation: ${scenarioContext.inflation}
+- Market risk: ${scenarioContext.marketRisk}
+- Geopolitical stress: ${scenarioContext.geopoliticalStress}
+- Regulation strictness: ${scenarioContext.regulationStrictness}
+- Economic growth: ${scenarioContext.economicGrowth}
+
+Target audience constraints:
+- Budget: ${audienceConstraints.budget || 'not specified'}
+- Risk tolerance: ${audienceConstraints.riskTolerance}
+- Experience level: ${audienceConstraints.experience}
+- Target location: ${audienceConstraints.location}
+- Go-to-market: ${audienceConstraints.goToMarket}
+
 Instructions:
 - Be concise and conversational. Keep responses short (2-3 sentences max unless asked for details)
 - You already know your feedback - don't rediscover it. Stand by your initial reaction
 - ${reaction.attention === 'ignore' ? "Explain why it doesn't interest you and what would need to change" : reaction.attention === 'partial' ? "Share your specific concerns and what would make you fully interested" : "Express your enthusiasm and ask about specific details that excite you"}
 - Speak naturally as a ${persona.demographics.gender?.toLowerCase() || 'professional'} from your generation would
 - Be direct but constructive. If skeptical, say why. If interested, say what caught your attention
+- Mention regional laws/economy/politics/socioeconomic realities when relevant
 - Don't over-explain. Wait for them to ask follow-ups
 - Always give direct feedback. Do not beat around the bush. Be honest and straightforward and how we can improve the idea based on your feedback.
 
@@ -3259,11 +3450,14 @@ Return only the improved idea, no additional commentary.`,
                   {reactions.slice(-5).reverse().map((reaction, index) => (
                     <div key={`${reaction.personaId}-${index}`} className="text-xs border-l-2 border-white/20 pl-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-white/90 font-mono">{reaction.persona?.name || 'Unknown'}</span>
-                        <div className={`w-2 h-2 ${
-                          reaction.attention === 'full' ? 'bg-white' :
-                          reaction.attention === 'partial' ? 'bg-white/70' : 'bg-white/40'
-                        }`}></div>
+                        <span className="text-white/90 font-mono">{reaction.persona ? getPersonaName(reaction.persona) : 'Unknown'}</span>
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{
+                            backgroundColor:
+                              ATTENTION_COLORS[reaction.attention as 'full' | 'partial' | 'ignore'] || '#facc15',
+                          }}
+                        />
                       </div>
                       {reaction.comment && (
                         <div className="text-white/60 mt-1 italic">
@@ -3446,10 +3640,19 @@ Return only the improved idea, no additional commentary.`,
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-mono text-white/80">{getPersonaName(item.persona)}</span>
-                      <Badge className={`text-xs ${
-                        item.reaction.attention === 'partial' ? 'bg-white/10 text-white/80' :
-                        'bg-white/10 text-white/80'
-                      }`}>
+                      <Badge
+                        className="text-xs text-white border"
+                        style={{
+                          borderColor:
+                            item.reaction.attention === 'partial'
+                              ? ATTENTION_COLORS.partial
+                              : ATTENTION_COLORS.ignore,
+                          backgroundColor:
+                            item.reaction.attention === 'partial'
+                              ? 'rgba(250, 204, 21, 0.15)'
+                              : 'rgba(239, 68, 68, 0.15)',
+                        }}
+                      >
                         {item.reaction.attention === 'partial' ? 'Neutral' : 'Negative'}
                       </Badge>
                     </div>
@@ -3638,7 +3841,7 @@ Return only the improved idea, no additional commentary.`,
                   }}
                 />
 
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                   <input
                     value={audienceConstraints.budget}
                     onChange={(e) =>
@@ -3652,27 +3855,66 @@ Return only the improved idea, no additional commentary.`,
                     onChange={(e) =>
                       setAudienceConstraints((prev) => ({
                         ...prev,
-                        riskTolerance: e.target.value,
+                        riskTolerance: e.target.value as RiskTolerance,
                       }))
                     }
                     className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
                   >
                     <option value="low">Risk: Low</option>
-                    <option value="balanced">Risk: Balanced</option>
+                    <option value="medium">Risk: Medium</option>
                     <option value="high">Risk: High</option>
                   </select>
-                  <input
-                    value={audienceConstraints.preferredRegion}
+                  <select
+                    value={audienceConstraints.experience}
                     onChange={(e) =>
                       setAudienceConstraints((prev) => ({
                         ...prev,
-                        preferredRegion: e.target.value,
+                        experience: e.target.value as ExperienceLevel,
                       }))
                     }
-                    placeholder="Target region (e.g. Europe)"
+                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                  >
+                    <option value="beginner">Experience: Beginner</option>
+                    <option value="intermediate">Experience: Intermediate</option>
+                    <option value="expert">Experience: Expert</option>
+                  </select>
+                  <select
+                    value={audienceConstraints.goToMarket}
+                    onChange={(e) =>
+                      setAudienceConstraints((prev) => ({
+                        ...prev,
+                        goToMarket: e.target.value as GoToMarketMode,
+                      }))
+                    }
+                    className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
+                  >
+                    <option value="online">Launch: Online</option>
+                    <option value="hybrid">Launch: Hybrid</option>
+                    <option value="offline">Launch: Offline</option>
+                  </select>
+                  <input
+                    value={audienceConstraints.location}
+                    onChange={(e) =>
+                      setAudienceConstraints((prev) => ({
+                        ...prev,
+                        location: e.target.value,
+                      }))
+                    }
+                    placeholder="Location (city/country)"
                     className="h-10 bg-black border border-white/20 text-white/90 text-xs font-mono px-3 focus:border-white/40 focus:outline-none"
                   />
                 </div>
+
+                {marketRecommendation && (
+                  <div className="border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs font-mono text-emerald-200">
+                    <div className="font-semibold uppercase tracking-wide text-emerald-100">
+                      Best Online Launch Market: {marketRecommendation.bestCity}, {marketRecommendation.bestCountry}
+                    </div>
+                    <div className="mt-1 text-emerald-200/90">
+                      {marketRecommendation.reason} Confidence: {Math.round(marketRecommendation.confidence * 100)}%.
+                    </div>
+                  </div>
+                )}
                 
                 {/* Small text about global deployment */}
                 <div className="text-xs text-white/40 font-mono text-center">
@@ -3992,14 +4234,20 @@ Return only the improved idea, no additional commentary.`,
                     const reaction = reactions.find(r => r.personaId === (selectedPersona.user_metadata || selectedPersona).personaId);
                     return reaction ? (
                       <div className="space-y-2 text-xs">
-                        <Badge 
-                          className={`${
-                            reaction.attention === 'full' ? 'bg-white/10 text-white' :
-                            reaction.attention === 'partial' ? 'bg-white/10 text-white/80' :
-                            'bg-gradient-to-br from-white/10 via-white/10 to-white/5 border border-white/25 shadow-lg shadow-white/10 text-white/85'
-                          }`}
+                        <Badge
+                          className="text-white border"
+                          style={{
+                            borderColor:
+                              ATTENTION_COLORS[reaction.attention as 'full' | 'partial' | 'ignore'] || '#facc15',
+                            backgroundColor:
+                              reaction.attention === 'full'
+                                ? 'rgba(34, 197, 94, 0.15)'
+                                : reaction.attention === 'partial'
+                                  ? 'rgba(250, 204, 21, 0.15)'
+                                  : 'rgba(239, 68, 68, 0.15)',
+                          }}
                         >
-                          {reaction.attention}
+                          {reaction.attention === 'full' ? 'approve' : reaction.attention === 'partial' ? 'neutral' : 'disapprove'}
                         </Badge>
                         <p className="text-white/80">{reaction.reason}</p>
                         {reaction.comment && (

@@ -19,7 +19,12 @@ export async function POST(request: NextRequest) {
 
     const staticAssistantId =
       process.env.VAPI_ASSISTANT_ID || process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
-    if (staticAssistantId) {
+    const allowDynamicPersonaAssistant = process.env.VAPI_DYNAMIC_ASSISTANT !== "false";
+    const shouldUseStaticAssistant =
+      Boolean(staticAssistantId) &&
+      (!body.persona || !allowDynamicPersonaAssistant);
+
+    if (shouldUseStaticAssistant && staticAssistantId) {
       return NextResponse.json({
         success: true,
         assistantId: staticAssistantId,

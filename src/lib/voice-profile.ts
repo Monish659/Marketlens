@@ -67,6 +67,14 @@ function pickElevenLabsVoice(gender: "male" | "female" | "neutral") {
   return "21m00Tcm4TlvDq8ikWAM";
 }
 
+function shouldPreferPremiumVoice() {
+  const premiumFlag =
+    process.env.VAPI_USE_PREMIUM_VOICE ||
+    process.env.NEXT_PUBLIC_VAPI_USE_PREMIUM_VOICE ||
+    '';
+  return ['1', 'true', 'yes', 'on'].includes(premiumFlag.toLowerCase());
+}
+
 export function getVoiceProfile(options?: {
   persona?: PersonaLike | null;
   forcedProvider?: string | null;
@@ -76,7 +84,12 @@ export function getVoiceProfile(options?: {
   const persona = options?.persona || null;
   const gender = normalizeGender(persona?.demographics?.gender);
 
-  const providerRaw = (options?.forcedProvider || process.env.VAPI_VOICE_PROVIDER || "openai")
+  const defaultProvider =
+    shouldPreferPremiumVoice() || process.env.VAPI_ELEVENLABS_API_KEY
+      ? "elevenlabs"
+      : "openai";
+
+  const providerRaw = (options?.forcedProvider || process.env.VAPI_VOICE_PROVIDER || defaultProvider)
     .trim()
     .toLowerCase();
   const provider: VoiceProvider =

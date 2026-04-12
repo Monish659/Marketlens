@@ -8,6 +8,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BorderBeam } from "@/components/magicui/border-beam";
 import { AnimatedBeam } from "@/components/magicui/animated-beam";
+import PrismaticBurst from "@/components/prismatic-burst";
+import DecryptedText from "@/components/decrypted-text";
 
 import {
   Announcement,
@@ -15,7 +17,6 @@ import {
   AnnouncementTitle,
 } from "@/components/ui/kibo-ui/announcement";
 import { ArrowUpRightIcon, Globe, Megaphone, FileText } from "lucide-react";
-import Hyperspeed from "@/components/hyperspeed";
 
 // Square component for animated beam
 const Circle = React.forwardRef<
@@ -50,9 +51,22 @@ export default function Landing() {
     <>
       {/* Hero Section with GIF Background */}
       <div className="min-h-screen bg-black relative overflow-hidden">
-        <Hyperspeed />
+        <div className="absolute inset-0 z-[1] opacity-70">
+          <PrismaticBurst
+            animationType="rotate3d"
+            intensity={1.6}
+            speed={0.5}
+            distort={0}
+            paused={false}
+            offset={{ x: 0, y: 0 }}
+            hoverDampness={0.25}
+            rayCount={0}
+            mixBlendMode="lighten"
+            colors={['#ff007a', '#4d3dff', '#ffffff']}
+          />
+        </div>
         <div
-          className="absolute inset-0 z-[1] opacity-25"
+          className="absolute inset-0 z-[2] opacity-20"
           style={{
             backgroundImage: "url('/final.gif')",
             backgroundSize: "cover",
@@ -61,7 +75,7 @@ export default function Landing() {
             backgroundBlendMode: "screen",
           }}
         />
-        <div className="absolute inset-0 z-[2] bg-black/45" />
+        <div className="absolute inset-0 z-[3] bg-black/45" />
         <nav className="relative z-10 flex items-center py-6 px-8 w-full mx-auto bg-black/50">
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -127,6 +141,17 @@ export default function Landing() {
             >
               {`AI agents for simulated market research`}
             </TextAnimate>
+            <div className="mb-4 text-center">
+              <DecryptedText
+                text="MarketLens"
+                animateOn="view"
+                revealDirection="center"
+                sequential
+                className="text-white"
+                encryptedClassName="text-white/40"
+                parentClassName="font-mono text-2xl md:text-3xl tracking-wide"
+              />
+            </div>
             <TextAnimate
               animation="fadeIn"
               by="line"

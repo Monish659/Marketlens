@@ -1,6 +1,7 @@
 import { GalleryVerticalEnd } from "lucide-react"
 
 import { LoginForm } from "@/components/login-form"
+import Hyperspeed from "@/components/hyperspeed"
 
 export default function LoginPage() {
   return (
@@ -14,6 +15,7 @@ export default function LoginPage() {
         backgroundBlendMode: "exclusion",
       }}
     >
+      <Hyperspeed />
       <div className="absolute inset-0 bg-black/80 z-0"></div>
 
       <div className="flex w-full flex-col gap-6 z-10">

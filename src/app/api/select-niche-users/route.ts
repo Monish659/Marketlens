@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const body = await request.json();
-    const { niche, users, prompt, limit = 100 } = body;
+    const { niche, users, prompt, limit = 100, targetLocation = 'Global', audienceConstraints = {} } = body;
 
     if (!niche || !users || !Array.isArray(users)) {
       console.error('💥 [SELECT-NICHE-USERS] Invalid input:', { 
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     console.log('📝 [SELECT-NICHE-USERS] Sample profile text:', userDocuments[0]?.text.substring(0, 150) + '...');
 
     // Create a comprehensive query for Cohere reranking
-    const query = createNicheQuery(niche, prompt);
+    const query = createNicheQuery(niche, prompt, targetLocation, audienceConstraints);
     console.log('🔍 [SELECT-NICHE-USERS] Reranking query:', query);
 
     // Use Cohere rerank to find the most relevant users
@@ -65,13 +65,17 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const selectedUsers = diversifyByCountry(rankedUsers, Math.min(limit, rankedUsers.length));
+    const locationAwareRankedUsers = applyLocationBoost(rankedUsers, targetLocation);
+    const selectedUsers = diversifyByCountry(
+      locationAwareRankedUsers,
+      Math.min(limit, locationAwareRankedUsers.length)
+    );
 
     // Log relevance score distribution
     const scores = selectedUsers.map(u => u.relevanceScore);
-    const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
-    const maxScore = Math.max(...scores);
-    const minScore = Math.min(...scores);
+    const avgScore = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 0;
+    const maxScore = scores.length ? Math.max(...scores) : 0;
+    const minScore = scores.length ? Math.min(...scores) : 0;
 
     console.log('📊 [SELECT-NICHE-USERS] Relevance scores:', {
       count: selectedUsers.length,
@@ -95,7 +99,8 @@ export async function POST(request: NextRequest) {
       totalProcessed: users.length,
       totalSelected: selectedUsers.length,
       niche: niche,
-      averageRelevanceScore: avgScore
+      averageRelevanceScore: avgScore,
+      targetLocation
     });
 
   } catch (error) {
@@ -136,6 +141,45 @@ function diversifyByCountry(rankedUsers: any[], limit: number) {
   }
 
   return diversified;
+}
+
+function normalizeLocation(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s,-]/g, '');
+}
+
+function applyLocationBoost(rankedUsers: any[], targetLocation?: string) {
+  const normalizedTarget = normalizeLocation(targetLocation);
+  if (!normalizedTarget || normalizedTarget === 'global' || normalizedTarget === 'worldwide') {
+    return rankedUsers;
+  }
+
+  const withBoost = rankedUsers.map((user) => {
+    const persona = user.user_metadata || user;
+    const city = normalizeLocation(persona?.location?.city);
+    const country = normalizeLocation(persona?.location?.country);
+
+    let boost = 0;
+    if (city.includes(normalizedTarget) || country.includes(normalizedTarget)) {
+      boost = 0.2;
+    } else {
+      const tokens = normalizedTarget.split(/[,\s]+/).filter((token) => token.length > 2);
+      if (tokens.some((token) => city.includes(token) || country.includes(token))) {
+        boost = 0.1;
+      } else {
+        boost = -0.03;
+      }
+    }
+
+    return {
+      ...user,
+      relevanceScore: Math.max(0, Math.min(1, (user.relevanceScore || 0) + boost)),
+    };
+  });
+
+  return withBoost.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
 }
 
 function createUserProfileText(user: any, niche: string): string {
@@ -180,12 +224,29 @@ function createUserProfileText(user: any, niche: string): string {
   return parts.join('. ');
 }
 
-function createNicheQuery(niche: string, originalPrompt?: string): string {
+function createNicheQuery(
+  niche: string,
+  originalPrompt?: string,
+  targetLocation = 'Global',
+  audienceConstraints: Record<string, any> = {}
+): string {
   // Create a more discriminating query that will properly differentiate between users
   let query = `Find users who are most likely to be interested in ${niche}`;
   
   if (originalPrompt) {
     query += `. The specific product/service is: ${originalPrompt}`;
+  }
+  if (targetLocation && String(targetLocation).toLowerCase() !== 'global') {
+    query += `. Prioritize users who are realistically based in or culturally tied to: ${targetLocation}.`;
+  }
+  if (audienceConstraints?.experience) {
+    query += ` Audience experience level target: ${audienceConstraints.experience}.`;
+  }
+  if (audienceConstraints?.riskTolerance) {
+    query += ` Risk preference target: ${audienceConstraints.riskTolerance}.`;
+  }
+  if (audienceConstraints?.goToMarket) {
+    query += ` Go-to-market model: ${audienceConstraints.goToMarket}.`;
   }
   
   // Make the criteria more specific and demanding

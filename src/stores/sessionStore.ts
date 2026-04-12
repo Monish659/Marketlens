@@ -29,8 +29,17 @@ interface AnalysisSession {
     audienceConstraints?: {
       budget?: string;
       riskTolerance?: string;
-      preferredRegion?: string;
+      experience?: string;
+      location?: string;
+      goToMarket?: string;
     };
+    marketRecommendation?: {
+      mode?: string;
+      bestCity?: string;
+      bestCountry?: string;
+      reason?: string;
+      confidence?: number;
+    } | null;
   };
   uiState: {
     viewMode: 'niche' | 'global';

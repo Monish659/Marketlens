@@ -57,7 +57,12 @@ function buildLegacyUser(session: Session): LegacyUser {
 
 export async function startGoogleOAuth() {
   const supabase = getBrowserSupabaseClient();
-  const redirectTo = `${window.location.origin}/auth/callback`;
+  const envRedirectBase =
+    process.env.NEXT_PUBLIC_AUTH_REDIRECT_BASE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    '';
+  const redirectBase = envRedirectBase.trim() || window.location.origin;
+  const redirectTo = `${redirectBase.replace(/\/$/, '')}/auth/callback`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -116,4 +121,3 @@ export async function completeOAuthSignIn(code: string | null) {
 
   return { user: legacyUser };
 }
-
