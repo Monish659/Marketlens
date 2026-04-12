@@ -154,6 +154,12 @@ COHERE_API_KEY=your-cohere-key
 OPENAI_API_KEY=your-openai-key
 NEXT_PUBLIC_VAPI_PUBLIC_KEY=your-vapi-public-key
 VAPI_PRIVATE_KEY=your-vapi-private-key
+
+# Optional: Palantir AIP / Ontology Query Integration
+PALANTIR_BASE_URL=https://losaltos.palantirfoundry.com
+PALANTIR_ONTOLOGY_RID=ontology-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+PALANTIR_API_LOGIC_ID=apiLogic1234567890
+PALANTIR_TOKEN=your-palantir-token
 ```
 
 4. **Start the development server:**
@@ -180,6 +186,9 @@ npm start
 
 # Run linting
 npm run lint
+
+# Test Palantir connection and agent query
+npm run test:palantir
 
 # Fix linting issues
 npm run lint:fix

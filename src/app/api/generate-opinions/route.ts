@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chatCompletion } from '@/lib/cohere';
+import {
+  buildPalantirInputFromIdea,
+  hasPalantirConfig,
+  runPalantirMarketResearch,
+} from '@/lib/palantir';
 
 const MAX_AI_OPINIONS = 12;
 const AI_BATCH_SIZE = 6;
@@ -83,6 +88,30 @@ export async function POST(request: NextRequest) {
     
     const { idea, profiles, scenarioContext } = body;
     const constraints = normalizeAudienceConstraints(scenarioContext?.audienceConstraints);
+    let palantirGuidance: string | null = null;
+    let palantirError: string | null = null;
+
+    // Palantir is optional. If configured, we inject one global strategy signal
+    // into each persona analysis. If not available, generation still works normally.
+    const palantirEnabled = hasPalantirConfig();
+
+    if (palantirEnabled) {
+      try {
+        const palantirInput = buildPalantirInputFromIdea(idea, constraints);
+        const palantirResult = await withTimeout(
+          runPalantirMarketResearch(palantirInput),
+          4500,
+          'Palantir query timeout'
+        );
+        palantirGuidance = palantirResult.guidance;
+        console.log('🧭 [GENERATE-OPINIONS] Palantir guidance attached');
+      } catch (error) {
+        palantirError = error instanceof Error ? error.message : 'Unknown Palantir error';
+        console.warn('⚠️ [GENERATE-OPINIONS] Palantir unavailable, continuing without it:', palantirError);
+      }
+    } else {
+      console.log('ℹ️ [GENERATE-OPINIONS] Palantir env not configured, skipping Palantir guidance');
+    }
 
     if (!idea || !profiles || !Array.isArray(profiles)) {
       console.error('💥 [GENERATE-OPINIONS] Invalid input:', { 
@@ -109,14 +138,14 @@ export async function POST(request: NextRequest) {
           batch.map(async (profile: any) => {
             try {
               const opinion = await withTimeout(
-                generateOpinionWithCohere(profile, idea, scenarioContext, constraints),
+                generateOpinionWithCohere(profile, idea, scenarioContext, constraints, palantirGuidance),
                 AI_TIMEOUT_MS,
                 `Cohere timeout for ${profile?.name || profile?.user_metadata?.name || 'persona'}`
               );
               return opinion;
             } catch (error) {
               console.warn(`⚠️ [GENERATE-OPINIONS] Falling back for ${profile?.name || profile?.user_metadata?.name || 'persona'}:`, error);
-              return generateFallbackOpinion(profile, idea, scenarioContext, constraints);
+              return generateFallbackOpinion(profile, idea, scenarioContext, constraints, palantirGuidance);
             }
           })
         );
@@ -132,7 +161,7 @@ export async function POST(request: NextRequest) {
     // Fill any missing entries (including profiles beyond AI sample limit) with fast fallback opinions.
     for (let i = 0; i < profiles.length; i++) {
       if (!opinions[i]) {
-        opinions[i] = generateFallbackOpinion(profiles[i], idea, scenarioContext, constraints);
+        opinions[i] = generateFallbackOpinion(profiles[i], idea, scenarioContext, constraints, palantirGuidance);
       }
     }
 
@@ -166,6 +195,11 @@ export async function POST(request: NextRequest) {
       opinions: locationAwareOpinions,
       count: locationAwareOpinions.length,
       marketRecommendation,
+      palantir: {
+        enabled: palantirEnabled,
+        used: Boolean(palantirGuidance),
+        error: palantirError,
+      },
     });
 
   } catch (error) {
@@ -196,7 +230,8 @@ async function generateOpinionWithCohere(
   profile: any,
   idea: string,
   scenarioContext?: any,
-  audienceConstraints?: AudienceConstraints
+  audienceConstraints?: AudienceConstraints,
+  palantirGuidance?: string | null
 ): Promise<any> {
   // Extract persona data (handle both Auth0 user structure and direct persona structure)
   const personaData = profile.user_metadata || profile;
@@ -229,6 +264,9 @@ ${JSON.stringify(normalizedConstraints, null, 2)}
 REGIONAL CONTEXT TO APPLY:
 ${regionalContext}
 
+PALANTIR MARKET STRATEGY (GLOBAL SIGNAL):
+${palantirGuidance?.trim() ? palantirGuidance : 'Not provided'}
+
 IDEA TO ANALYZE:
 "${idea}"
 
@@ -253,6 +291,7 @@ Guidelines:
 - Consider their professional background, age, interests, and lifestyle
 - Consider budget/risk/region constraints when deciding practicality
 - Explicitly factor local laws, economy, politics, and socioeconomic context from the regional context section
+- Use the Palantir strategy signal as a high-level market baseline, but keep this persona-specific
 - For online launches, include whether this person believes their city/country is a strong initial launch market
 - Make the reason and comment sound natural and personal
 - For "ignore" and "partial" attention, provide constructive, specific rejection reasoning that helps improve the idea
@@ -399,7 +438,8 @@ function generateFallbackOpinion(
   profile: any,
   idea: string,
   scenarioContext?: any,
-  audienceConstraints?: AudienceConstraints
+  audienceConstraints?: AudienceConstraints,
+  palantirGuidance?: string | null
 ): any {
   const personaData = profile.user_metadata || profile;
   const random = Math.random();
@@ -431,20 +471,22 @@ function generateFallbackOpinion(
     .join(', ');
   const finalAdjusted = adjusted + locationMatchBoost;
 
+  const palantirHint = compactPalantirGuidance(palantirGuidance);
+
   if (finalAdjusted > 0.7) {
     attention = 'full';
     sentiment = Math.max(0.55, 0.7 + Math.random() * 0.25 + scenarioShift + regionBias);
-    reason = `This aligns with ${personaData.title || 'their professional background'} and feels feasible in ${personaData.location?.city || 'their market'} given ${regionContext.economy.toLowerCase()}${constraintsText ? ` under ${constraintsText}` : ''}.`;
+    reason = `This aligns with ${personaData.title || 'their professional background'} and feels feasible in ${personaData.location?.city || 'their market'} given ${regionContext.economy.toLowerCase()}${constraintsText ? ` under ${constraintsText}` : ''}.${palantirHint ? ` ${palantirHint}` : ''}`;
     comment = `Strong potential if execution stays practical for local regulations and pricing expectations.`;
   } else if (finalAdjusted > 0.4) {
     attention = 'partial';
     sentiment = Math.max(0.2, Math.min(0.7, 0.42 + Math.random() * 0.3 + scenarioShift + regionBias));
-    reason = `Interesting concept, but adoption is uncertain in ${personaData.location?.country || 'this region'} due to ${regionContext.laws.toLowerCase()} and ${regionContext.socioeconomic.toLowerCase()}.`;
+    reason = `Interesting concept, but adoption is uncertain in ${personaData.location?.country || 'this region'} due to ${regionContext.laws.toLowerCase()} and ${regionContext.socioeconomic.toLowerCase()}.${palantirHint ? ` ${palantirHint}` : ''}`;
     comment = `I need clearer rollout details, pricing transparency, and proof this works in real local conditions.`;
   } else {
     attention = 'ignore';
     sentiment = Math.max(0, Math.min(0.35, Math.random() * 0.3 + scenarioShift + regionBias));
-    reason = `Not compelling yet because the value proposition does not overcome local constraints around ${regionContext.politics.toLowerCase()} and ${regionContext.socioeconomic.toLowerCase()}${constraintsText ? ` given ${constraintsText}` : ''}.`;
+    reason = `Not compelling yet because the value proposition does not overcome local constraints around ${regionContext.politics.toLowerCase()} and ${regionContext.socioeconomic.toLowerCase()}${constraintsText ? ` given ${constraintsText}` : ''}.${palantirHint ? ` ${palantirHint}` : ''}`;
     comment = undefined;
   }
   
@@ -456,6 +498,14 @@ function generateFallbackOpinion(
     sentiment,
     persona: normalizePersonaForOpinion(profile),
   };
+}
+
+function compactPalantirGuidance(guidance?: string | null) {
+  const text = String(guidance || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const maxLen = 140;
+  const clipped = text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text;
+  return `Palantir signal: ${clipped}`;
 }
 
 function normalizeAudienceConstraints(input?: AudienceConstraints): Required<AudienceConstraints> {
