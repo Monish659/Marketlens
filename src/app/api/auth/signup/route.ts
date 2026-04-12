@@ -13,109 +13,92 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!name || name.trim() === '') {
-      return NextResponse.json(
-        { error: 'Name is required' },
-        { status: 400 }
-      );
-    }
+    const nameValue = (name && name.trim()) || email.split('@')[0];
 
-    // Sign up with Supabase
+    // Sign up with Supabase Auth
+    console.log('📝 Starting signup for:', email);
     const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
       email,
       password,
       options: {
-        data: {
-          name: name.trim()
-        }
+        data: { name: nameValue }
       }
     });
 
     if (authError) {
-      console.error('Supabase signup error:', authError);
-      return NextResponse.json(
-        { error: authError.message },
-        { status: 400 }
-      );
+      console.error('❌ Auth signup failed:', authError);
+      return NextResponse.json({ error: authError.message }, { status: 400 });
     }
 
     if (!authData.user) {
-      return NextResponse.json(
-        { error: 'Signup failed' },
-        { status: 400 }
-      );
+      console.error('❌ No user returned from auth signup');
+      return NextResponse.json({ error: 'Signup failed - no user returned' }, { status: 400 });
     }
 
-    console.log('🔐 Auth user created:', authData.user.id, authData.user.email);
+    const userId = authData.user.id;
+    const userEmail = authData.user.email!;
+    console.log('✅ Auth user created:', userId, userEmail);
 
-    // Create or fetch user record
-    let user = null;
-    const defaultName = name.trim() || authData.user.email!.split('@')[0];
+    // Create user record in database - NO TRIGGERS, DIRECT INSERT ONLY
+    let user: any = null;
+    let userCreated = false;
 
     try {
-      // Try to fetch existing user first
-      const { data: existingUser, error: fetchError } = await supabaseAdmin
+      console.log('📌 Attempting to create user record in database...');
+      const { data: insertedUser, error: insertError } = await supabaseAdmin
         .from('users')
-        .select('*')
-        .eq('id', authData.user.id)
+        .insert({
+          id: userId,
+          email: userEmail,
+          name: nameValue
+        })
+        .select()
         .single();
 
-      if (!fetchError && existingUser) {
-        user = existingUser;
-        console.log('✅ User already exists:', user.email);
-      } else if (fetchError?.code === 'PGRST116') {
-        // User doesn't exist, create them
-        console.log('📝 Creating new user record...');
-        const { data: newUser, error: createError } = await supabaseAdmin
-          .from('users')
-          .insert([{
-            id: authData.user.id,
-            email: authData.user.email!,
-            name: defaultName
-          }])
-          .select()
-          .single();
+      if (insertError) {
+        console.error('⚠️ Insert error:', insertError.code, insertError.message);
+        
+        // If duplicate key error, user already exists - fetch it
+        if (insertError.code === '23505') {
+          console.log('📌 Duplicate detected - user may already exist, fetching...');
+          const { data: existingUser, error: fetchError } = await supabaseAdmin
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
 
-        if (createError) {
-          console.error('❌ Error creating user:', createError);
-          if (createError.code === '23505') {
-            const { data: dupUser } = await supabaseAdmin
-              .from('users')
-              .select('*')
-              .eq('id', authData.user.id)
-              .single();
-            user = dupUser || null;
+          if (!fetchError && existingUser) {
+            user = existingUser;
+            console.log('✅ Found existing user:', user.email);
+            userCreated = true;
+          } else {
+            console.warn('⚠️ Could not fetch existing user after 23505 error');
           }
-        } else {
-          user = newUser;
-          console.log('✅ User created:', newUser?.email);
         }
-      } else {
-        console.error('❌ Unexpected fetch error:', fetchError);
+        // For any other error, we'll continue anyway - user is authenticated
+      } else if (insertedUser) {
+        user = insertedUser;
+        userCreated = true;
+        console.log('✅ User record created:', user.email);
       }
-    } catch (error) {
-      console.error('❌ Error in user creation logic:', error);
+    } catch (dbError) {
+      console.error('❌ Database operation error:', dbError);
+      // Continue - user is still authenticated in auth.users
     }
 
-    if (!user) {
-      console.warn('⚠️ User record not created but auth succeeded - using auth data');
-    }
-
-    console.log('✅ User signed up successfully:', authData.user.email);
-
-    // Return format that matches what the frontend expects
-    const responseData = {
+    // Return response - user ALWAYS has auth even if db record creation fails
+    const response = {
       success: true,
-      message: authData.session ? 'Account created and logged in!' : 'Account created! Please check your email to verify.',
+      message: 'Account created successfully!',
       user: {
-        sub: authData.user.id,
-        user_id: authData.user.id,
-        email: authData.user.email,
-        name: user?.name || defaultName,
-        picture: `https://avatar.vercel.sh/${authData.user.email}`,
+        sub: userId,
+        user_id: userId,
+        email: userEmail,
+        name: user?.name || nameValue,
+        picture: `https://avatar.vercel.sh/${userEmail}`,
         email_verified: authData.user.email_confirmed_at !== null
       },
-      // Include session if user is automatically logged in
+      // Include session if available
       ...(authData.session && {
         access_token: authData.session.access_token,
         token_type: 'Bearer',
@@ -123,13 +106,13 @@ export async function POST(request: NextRequest) {
       })
     };
 
-    console.log('📤 Signup response:', responseData.success);
-    return NextResponse.json(responseData);
+    console.log('✅ SIGNUP COMPLETE - User:', userEmail, 'DB Created:', userCreated);
+    return NextResponse.json(response, { status: 200 });
 
   } catch (error: any) {
-    console.error('Signup error:', error);
+    console.error('❌ SIGNUP FATAL ERROR:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: error?.message || 'Internal server error' },
       { status: 500 }
     );
   }

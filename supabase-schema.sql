@@ -3,10 +3,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Users table (will be populated by our APIs)
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   name TEXT,
-  auth0_id TEXT, -- Store original Auth0 ID for reference
+  auth0_id TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -91,16 +91,18 @@ CREATE TRIGGER update_analysis_sessions_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Create a function to handle new user registration
-CREATE OR REPLACE FUNCTION handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO users (id, email, name)
-  VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data->>'name');
-  RETURN NEW;
-END;
-$$ language 'plpgsql' SECURITY DEFINER;
+-- DISABLED - we handle user creation in API routes, not via trigger
+-- CREATE OR REPLACE FUNCTION handle_new_user()
+-- RETURNS TRIGGER AS $$
+-- BEGIN
+--   INSERT INTO users (id, email, name)
+--   VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data->>'name');
+--   RETURN NEW;
+-- END;
+-- $$ language 'plpgsql' SECURITY DEFINER;
 
 -- Trigger to automatically create user record on signup
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+-- DISABLED - causes conflicts with manual API-based creation
+-- CREATE TRIGGER on_auth_user_created
+--   AFTER INSERT ON auth.users
+--   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
