@@ -6,6 +6,14 @@ An AI-powered market simulation platform that lets you test product ideas agains
 
 Transform your product validation from months of surveys to minutes of AI-powered insights with realistic persona feedback, voice conversations, and iterative refinement.
 
+## Live Demo
+
+- **Vercel:** https://marketlens-brown.vercel.app
+
+## Current UI (Live Vercel Screenshot)
+
+![MarketLens live Vercel screenshot](public/vercel-screenshot.png)
+
 ## Core Features
 
 ### **3D Globe Visualization**
