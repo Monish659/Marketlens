@@ -34,15 +34,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find or create user in our users table
-    let { data: user, error: userError } = await supabaseAdmin
+    // Find user in our users table
+    let user: any = null;
+    let { data: userData, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', authData.user.id)
       .single();
 
     if (userError && userError.code === 'PGRST116') {
-      // User doesn't exist in users table, create them
+      // User doesn't exist, try to create them
+      console.log('👤 User not found in users table, attempting to create...');
+      
       const { data: newUser, error: createError } = await supabaseAdmin
         .from('users')
         .insert({
@@ -53,36 +56,31 @@ export async function POST(request: NextRequest) {
         .select()
         .single();
 
-      if (createError) {
-        console.error('💥 Error creating user record:', createError);
-        
-        // If user already exists (duplicate key error), fetch them instead
-        if (createError.code === '23505') {
-          console.log('⚠️ User already exists, fetching existing record');
-          const { data: existingUser, error: fetchError } = await supabaseAdmin
-            .from('users')
-            .select('*')
-            .eq('email', authData.user.email!)
-            .single();
-          
-          if (!fetchError && existingUser) {
-            user = existingUser;
-            console.log('✅ Found existing user record:', user.email);
-          } else {
-            console.error('💥 Failed to fetch existing user:', fetchError);
-            return NextResponse.json({ error: 'Failed to create or fetch user record' }, { status: 500 });
-          }
-        } else {
-          console.error('💥 Unknown error creating user:', createError);
-          return NextResponse.json({ error: 'Failed to create user record' }, { status: 500 });
-        }
-      } else {
+      if (!createError) {
         user = newUser;
         console.log('✅ Created new user record:', user.email);
+      } else if (createError.code === '23505') {
+        // User already exists, fetch them
+        console.log('⚠️ User already exists, fetching existing record');
+        const { data: existingUser } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('id', authData.user.id)
+          .single();
+        
+        user = existingUser || null;
+      } else {
+        console.error('❌ Error creating user record:', createError);
+        // Continue anyway - user can still be logged in
       }
+    } else if (userError) {
+      console.error('❌ Error fetching user:', userError);
+      // Continue anyway - user can still be logged in
+    } else {
+      user = userData;
     }
 
-    console.log('✅ User authenticated:', authData.user.email, 'User record:', user?.email || 'none');
+    console.log('✅ User authenticated:', authData.user.email, 'User record:', user?.email || 'not found');
 
     // Return format that matches what the frontend expects from Auth0
     const responseData = {
@@ -93,7 +91,7 @@ export async function POST(request: NextRequest) {
         sub: authData.user.id,
         user_id: authData.user.id,
         email: authData.user.email,
-        name: user.name,
+        name: user?.name || authData.user.user_metadata?.name || authData.user.email!.split('@')[0],
         picture: authData.user.user_metadata?.avatar_url || `https://avatar.vercel.sh/${authData.user.email}`,
         email_verified: authData.user.email_confirmed_at !== null
       }
