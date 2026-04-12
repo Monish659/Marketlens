@@ -92,40 +92,45 @@ export function SignUpForm({
 
     setIsLoading(true)
     try {
-      console.log('🚀 Creating user via API...', { email })
-      
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email,
           password,
-          name: email.split('@')[0] // Use email prefix as name
+          name: email.split('@')[0]
         }),
       })
 
       const data = await response.json()
 
-      if (response.ok) {
-        console.log('✅ User created successfully:', data)
-        alert('Account created successfully! Please check your email to verify your account.')
+      if (response.ok && data.success) {
+        // Store user data and token
+        localStorage.setItem('user_data', JSON.stringify({
+          id: data.user.id,
+          email: data.user.email,
+          name: data.user.name,
+          sub: data.user.id,
+          user_id: data.user.id,
+          email_verified: false,
+          picture: `https://avatar.vercel.sh/${data.user.email}`
+        }))
         
-        // Clear form
-        setEmail('')
-        setPassword('')
-        setConfirmPassword('')
+        if (data.session?.access_token) {
+          localStorage.setItem('auth_tokens', JSON.stringify({
+            access_token: data.session.access_token,
+            token_type: 'Bearer'
+          }))
+        }
         
-        // Optionally redirect to login
-        // window.location.href = '/login'
+        alert('✅ Account created! Redirecting...')
+        setTimeout(() => window.location.href = '/projects', 1000)
       } else {
-        console.error('❌ Signup failed:', data.error)
-        alert(data.error || 'Failed to create account')
+        alert('❌ ' + (data.error || 'Signup failed'))
       }
     } catch (error) {
-      console.error('❌ Signup error:', error)
-      alert('Network error. Please try again.')
+      console.error('Signup error:', error)
+      alert('❌ Network error')
     } finally {
       setIsLoading(false)
     }

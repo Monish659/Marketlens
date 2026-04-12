@@ -82,31 +82,31 @@ export function LoginForm({
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json()
 
-      if (response.ok) {
-        console.log('✅ Login successful:', data.user)
+      if (response.ok && data.access_token) {
+        // Store tokens and user
+        localStorage.setItem('auth_tokens', JSON.stringify({
+          access_token: data.access_token,
+          token_type: 'Bearer'
+        }))
+        localStorage.setItem('user_data', JSON.stringify({
+          id: data.user.id,
+          email: data.user.email,
+          name: data.user.name,
+          sub: data.user.id,
+          user_id: data.user.id,
+          email_verified: data.user.email_verified || false,
+          picture: data.user.picture || `https://avatar.vercel.sh/${data.user.email}`
+        }))
         
-        // Store tokens in localStorage for session management
-        // Store the entire response as auth_tokens (contains access_token, etc.)
-        localStorage.setItem('auth_tokens', JSON.stringify(data))
-        localStorage.setItem('user_data', JSON.stringify(data.user))
-        
-        // Clear form
-        setEmail('')
-        setPassword('')
-        
-        // Show loading animation before redirecting to projects
         setShowLoading(true)
       } else {
-        console.error('❌ Login failed:', data.error)
-        alert(data.error || 'Login failed')
+        alert('❌ ' + (data.error || 'Login failed'))
       }
     } catch (error) {
       console.error('❌ Login error:', error)
