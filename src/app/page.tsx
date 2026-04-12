@@ -53,8 +53,8 @@ export default function Landing() {
         <div className="absolute inset-0 z-[1] opacity-100">
           <PrismaticBurst
             animationType="rotate3d"
-            intensity={1.35}
-            speed={0.22}
+            intensity={1.5}
+            speed={0.27}
             distort={0.12}
             paused={false}
             offset={{ x: 0, y: 0 }}
