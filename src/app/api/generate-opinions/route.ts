@@ -87,6 +87,17 @@ export async function POST(request: NextRequest) {
     console.log('�� [GENERATE-OPINIONS] Idea preview:', body.idea?.substring(0, 50) + '...' || 'No idea');
     
     const { idea, profiles, scenarioContext } = body;
+
+    if (!idea || !profiles || !Array.isArray(profiles)) {
+      console.error('💥 [GENERATE-OPINIONS] Invalid input:', { 
+        hasIdea: !!idea, 
+        hasProfiles: !!profiles, 
+        isProfilesArray: Array.isArray(profiles),
+        profilesLength: profiles?.length 
+      });
+      return NextResponse.json({ error: 'Idea and profiles are required' }, { status: 400 });
+    }
+
     const constraints = normalizeAudienceConstraints(scenarioContext?.audienceConstraints);
     let palantirGuidance: string | null = null;
     let palantirError: string | null = null;
@@ -97,7 +108,7 @@ export async function POST(request: NextRequest) {
 
     if (palantirEnabled) {
       try {
-        const palantirInput = buildPalantirInputFromIdea(idea, constraints);
+        const palantirInput = buildPalantirInputFromIdea(String(idea), constraints);
         const palantirResult = await withTimeout(
           runPalantirMarketResearch(palantirInput),
           4500,
@@ -111,16 +122,6 @@ export async function POST(request: NextRequest) {
       }
     } else {
       console.log('ℹ️ [GENERATE-OPINIONS] Palantir env not configured, skipping Palantir guidance');
-    }
-
-    if (!idea || !profiles || !Array.isArray(profiles)) {
-      console.error('💥 [GENERATE-OPINIONS] Invalid input:', { 
-        hasIdea: !!idea, 
-        hasProfiles: !!profiles, 
-        isProfilesArray: Array.isArray(profiles),
-        profilesLength: profiles?.length 
-      });
-      return NextResponse.json({ error: 'Idea and profiles are required' }, { status: 400 });
     }
 
     console.log('🎯 [GENERATE-OPINIONS] Processing', profiles.length, 'profiles for idea analysis');
