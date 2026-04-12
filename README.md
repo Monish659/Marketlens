@@ -1,7 +1,6 @@
 # MarketLens
 *AI agents for simulated market research*
 
-![MarketLens Dashboard](screenshot.png)
 
 An AI-powered market simulation platform that lets you test product ideas against hundreds of intelligent personas in real-time. Built for entrepreneurs, product managers, and researchers who want to validate ideas before launch.
 
