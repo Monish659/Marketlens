@@ -383,6 +383,34 @@ This project is proprietary software. All rights reserved.
 
 For support, feature requests, or bug reports, please contact the development team.
 
+## 🧠 Role of Palantir AIP (Product Engine)
+
+Palantir AIP serves as the core **product engine** behind MarketLens AI, powering all intelligence, decision-making, and strategy generation.
+
+At the heart of the system is an **AIP Logic function**, which acts as a structured AI pipeline. This function takes in user-defined inputs — including industry, budget, goal, and target audience — and transforms them into a detailed, actionable marketing strategy using a large language model (Claude 3.7 Sonnet).
+
+Unlike traditional applications that rely on static rules or pre-defined templates, AIP enables **dynamic, context-aware reasoning**. Each output is generated in real-time based on the specific combination of inputs, allowing MarketLens to produce highly tailored strategies rather than generic advice.
+
+### 🔧 How AIP powers MarketLens
+
+- **Input Processing:** User inputs from the UI are passed directly into the AIP Logic function as structured variables.
+- **Prompt Orchestration:** A carefully engineered system prompt guides the LLM to generate outputs with clear structure, depth, and realism.
+- **LLM Execution:** Claude 3.7 Sonnet is leveraged within AIP to perform advanced reasoning, synthesizing marketing knowledge into actionable strategies.
+- **Output Structuring:** The response is formatted into key sections such as channel selection, budget allocation, messaging strategy, risks, and expected outcomes.
+- **Seamless Integration:** AIP connects directly to the Workshop UI, enabling a smooth flow from user input to displayed results.
+
+### 🚀 Why AIP is critical
+
+AIP transforms MarketLens from a simple interface into a **fully functional AI product**. It eliminates the need for backend infrastructure, API orchestration, and model hosting, allowing the system to operate as a cohesive, end-to-end solution within Foundry.
+
+By using AIP, MarketLens achieves:
+- **Scalability** — strategies can be generated for any industry or use case
+- **Flexibility** — outputs adapt instantly to new inputs
+- **Speed** — real-time generation without manual intervention
+- **Reliability** — consistent structure and quality across outputs
+
+In essence, Palantir AIP is not just a supporting tool — it is the **central engine that drives the entire MarketLens experience**, enabling intelligent automation of complex marketing strategy creation.
+
 ---
 
 *MarketLens - Because your next billion-dollar idea deserves more than a guess.*
