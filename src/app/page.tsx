@@ -245,15 +245,13 @@ export default function Landing() {
 
                 <div className="space-y-4 p-4 sm:p-5">
                   <div className="rounded-2xl border border-white/10 bg-black/45 p-2.5 sm:p-3">
-                    <video
-                      autoPlay
-                      loop
-                      muted
-                      playsInline
+                    <Image
+                      src="/vercel-screenshot.png"
+                      alt="MarketLens dashboard preview"
+                      width={1280}
+                      height={720}
                       className="h-52 w-full rounded-xl border border-white/10 object-cover sm:h-64"
-                    >
-                      <source src="/marketlens.mp4" type="video/mp4" />
-                    </video>
+                    />
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">
