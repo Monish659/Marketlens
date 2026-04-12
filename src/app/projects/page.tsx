@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, FolderOpen, Calendar, Activity, LogOut } from "lucide-react";
+import { Plus, FolderOpen, Calendar, Activity, LogOut, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 
 interface Project {
@@ -41,6 +41,7 @@ export default function ProjectsPage() {
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -237,6 +238,69 @@ export default function ProjectsPage() {
     router.push(`/dashboard?project=${projectId}`);
   };
 
+  const deleteProject = async (project: Project, event: React.MouseEvent) => {
+    event.stopPropagation();
+
+    if (deletingProjectId) return;
+
+    const confirmed = window.confirm(
+      `Delete project "${project.name}"?\n\nThis will permanently remove its sessions and cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingProjectId(project._id);
+    try {
+      const tokens = localStorage.getItem("auth_tokens");
+      if (!tokens) {
+        router.push("/login");
+        return;
+      }
+
+      const parsedTokens = JSON.parse(tokens);
+      const userData = localStorage.getItem("user_data");
+      const parsedUser = userData ? JSON.parse(userData) : null;
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      const resolvedEmail =
+        parsedUser?.email || parsedTokens.email || parsedTokens.user?.email;
+
+      if (parsedTokens.access_token) {
+        headers["Authorization"] = `Bearer ${parsedTokens.access_token}`;
+        if (resolvedEmail) {
+          headers["x-user-email"] = resolvedEmail;
+        }
+      } else {
+        headers["x-user-id"] =
+          parsedTokens.sub || parsedTokens.user_id || "dev_user_" + Date.now();
+      }
+
+      const response = await fetch(`/api/projects/${project._id}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ error: "Failed to delete project" }));
+        alert(errorData.error || "Failed to delete project");
+        return;
+      }
+
+      // Clear any cached "last opened session" for deleted project.
+      localStorage.removeItem(`marketlens:last-session:${project._id}`);
+      setProjects((prev) => prev.filter((item) => item._id !== project._id));
+    } catch (error) {
+      console.error("Failed to delete project:", error);
+      alert("Failed to delete project. Please try again.");
+    } finally {
+      setDeletingProjectId(null);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("user_data");
     localStorage.removeItem("auth_tokens");
@@ -416,9 +480,21 @@ export default function ProjectsPage() {
                           </CardDescription>
                         )}
                       </div>
-                      <div className="text-xs font-mono text-white/40">
-                        <Calendar className="w-3 h-3 inline mr-1" />
-                        {formatDate(project.createdAt)}
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          onClick={(event) => deleteProject(project, event)}
+                          disabled={deletingProjectId === project._id}
+                          className="p-1.5 border border-white/20 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete project"
+                          aria-label={`Delete ${project.name}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="text-xs font-mono text-white/40 whitespace-nowrap">
+                          <Calendar className="w-3 h-3 inline mr-1" />
+                          {formatDate(project.createdAt)}
+                        </div>
                       </div>
                     </div>
                   </CardHeader>

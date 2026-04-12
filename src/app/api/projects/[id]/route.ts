@@ -88,3 +88,66 @@ export async function GET(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const headers = extractUserFromHeaders(request);
+
+    if (!headers.email && !headers.id) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const userEmail = headers.email || `user_${headers.id}@marketlens.local`;
+
+    // Find user in Supabase
+    let { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', userEmail)
+      .single();
+
+    if (userError && userError.code === 'PGRST116') {
+      // Create user if doesn't exist so auth mapping remains consistent
+      const { data: newUser, error: createError } = await supabaseAdmin
+        .from('users')
+        .insert({
+          email: userEmail || `user_${headers.id}@marketlens.local`,
+          name: userEmail?.split('@')[0] || `User ${headers.id}`
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        return NextResponse.json({ error: 'Failed to identify user' }, { status: 500 });
+      }
+      user = newUser;
+    } else if (userError) {
+      return NextResponse.json({ error: 'Failed to identify user' }, { status: 500 });
+    }
+
+    if (!user?.id) {
+      return NextResponse.json({ error: 'Failed to identify user' }, { status: 500 });
+    }
+
+    // Scope delete by both project id and user id (tenant isolation).
+    const { error: deleteError } = await supabaseAdmin
+      .from('projects')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (deleteError) {
+      console.error('Error deleting project:', deleteError);
+      return NextResponse.json({ error: 'Failed to delete project' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error in project delete API:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
