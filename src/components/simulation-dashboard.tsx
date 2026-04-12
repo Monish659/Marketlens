@@ -18,7 +18,6 @@ import {
   ChevronDown, 
   Plus, 
   Share2, 
-  MessageSquare, 
   Info,
   X,
   FileText,
@@ -4320,27 +4319,6 @@ Return only the improved idea, no additional commentary.`,
                     </Button>
                   );
                 })()}
-                
-                {/* Get Feedback Button - only show when not in call and have conversation */}
-                {!isInCall && transcript.length > 0 && (
-                  <Button
-                    onClick={openFeedbackModal}
-                    disabled={isGeneratingFeedback}
-                    className="flex-1 bg-white/10 text-white/80 hover:bg-white/15 border border-white/25"
-                  >
-                    {isGeneratingFeedback ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <MessageSquare className="h-4 w-4 mr-2" />
-                        Get Feedback
-                      </>
-                    )}
-                  </Button>
-                )}
                 
                 <Button
                   onClick={() => {
