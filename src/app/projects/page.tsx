@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -266,13 +265,6 @@ export default function ProjectsPage() {
       <header className="border-b border-white/10 bg-black/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Image
-              src="/logo.png"
-              alt="MarketLens Logo"
-              width={32}
-              height={32}
-              className="w-8 h-8"
-            />
             <div>
               <h1 className="text-md font-mono">MarketLens</h1>
               <p className="text-xs text-white/60 font-mono">Projects</p>

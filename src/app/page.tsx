@@ -54,15 +54,15 @@ export default function Landing() {
         <div className="absolute inset-0 z-[1] opacity-70">
           <PrismaticBurst
             animationType="rotate3d"
-            intensity={1.6}
-            speed={0.5}
+            intensity={0.55}
+            speed={0.18}
             distort={0}
             paused={false}
             offset={{ x: 0, y: 0 }}
-            hoverDampness={0.25}
+            hoverDampness={0.15}
             rayCount={0}
             mixBlendMode="lighten"
-            colors={['#ff007a', '#4d3dff', '#ffffff']}
+            colors={['#ffffff', '#d1d1d1', '#888888', '#000000']}
           />
         </div>
         <div
@@ -79,13 +79,6 @@ export default function Landing() {
         <nav className="relative z-10 flex items-center py-6 px-8 w-full mx-auto bg-black/50">
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Image
-              src="/logo.png"
-              alt="MarketLens Logo"
-              width={32}
-              height={32}
-              className="w-8 h-8"
-            />
             <span className="ml-1 text-lg text-white font-mono">MarketLens</span>
           </div>
 
@@ -479,13 +472,6 @@ export default function Landing() {
             <div className="max-w-6xl mx-auto px-8">
               <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                  <Image
-                    src="/logo.png"
-                    alt="MarketLens Logo"
-                    width={24}
-                    height={24}
-                    className="w-6 h-6"
-                  />
                   <span className="text-sm text-white font-mono">MarketLens</span>
                 </div>
                 <div className="text-xs text-white/40 font-mono">

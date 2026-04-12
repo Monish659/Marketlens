@@ -3071,11 +3071,6 @@ Return only the improved idea, no additional commentary.`,
       <div className="w-64 border-r border-white/10 p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-6">
           <Link href="/projects" className="flex items-center gap-2" aria-label="Go to Projects">
-            <img 
-              src="/logo.png" 
-              alt="MarketLens Logo" 
-              className="w-10 h-10 object-contain"
-            />
             <span className="text-white font-mono text-lg">MarketLens</span>
           </Link>
         </div>
