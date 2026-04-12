@@ -194,6 +194,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   // Auto-save timer
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const toolbarNoticeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hasAutoLoadedSessionRef = useRef(false);
   const [postContent, setPostContent] = useState('');
   const [currentPost, setCurrentPost] = useState('');
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -652,6 +653,75 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     
     void hydrateGlobalUserPool();
   }, [projectId, sessionId]);
+
+  useEffect(() => {
+    hasAutoLoadedSessionRef.current = false;
+  }, [projectId]);
+
+  // Auto-resume the most relevant session when URL has no explicit session param.
+  // Priority:
+  // 1) last opened session for this project (from localStorage)
+  // 2) most recently updated/created session
+  useEffect(() => {
+    if (!projectId || sessionId || isLoadingSessions || currentSession || hasAutoLoadedSessionRef.current) {
+      return;
+    }
+    if (!sessions.length) return;
+
+    const lastSessionStorageKey = `marketlens:last-session:${projectId}`;
+    let targetSession = sessions[0];
+
+    try {
+      const lastSessionId = typeof window !== 'undefined'
+        ? window.localStorage.getItem(lastSessionStorageKey)
+        : null;
+      if (lastSessionId) {
+        const matched = sessions.find((session) => session._id === lastSessionId);
+        if (matched) targetSession = matched;
+      } else {
+        targetSession = [...sessions].sort((a, b) => {
+          const aTs = new Date((a as any).updatedAt || a.createdAt || 0).getTime();
+          const bTs = new Date((b as any).updatedAt || b.createdAt || 0).getTime();
+          return bTs - aTs;
+        })[0];
+      }
+    } catch (error) {
+      console.warn('Failed to resolve last session from localStorage:', error);
+    }
+
+    hasAutoLoadedSessionRef.current = true;
+    const selectedSessionId = targetSession._id;
+
+    loadSession(selectedSessionId)
+      .then((session) => {
+        restoreSessionState(session);
+        router.replace(`/dashboard?project=${projectId}&session=${selectedSessionId}`);
+      })
+      .catch((error) => {
+        console.error('Failed to auto-resume last session:', error);
+        hasAutoLoadedSessionRef.current = false;
+      });
+  }, [
+    projectId,
+    sessionId,
+    isLoadingSessions,
+    currentSession,
+    sessions,
+    loadSession,
+    router
+  ]);
+
+  useEffect(() => {
+    if (!projectId || !currentSession?._id) return;
+    const lastSessionStorageKey = `marketlens:last-session:${projectId}`;
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(lastSessionStorageKey, currentSession._id);
+      }
+    } catch (error) {
+      console.warn('Unable to persist last session id:', error);
+    }
+  }, [projectId, currentSession?._id]);
 
   // Restore session state
   const restoreSessionState = (session: any) => {
