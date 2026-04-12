@@ -195,6 +195,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   
   // Auto-save timer
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const toolbarNoticeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [postContent, setPostContent] = useState('');
   const [currentPost, setCurrentPost] = useState('');
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -242,6 +243,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
   const [isRunningAnalysis, setIsRunningAnalysis] = useState(false);
   const [allUsers, setAllUsers] = useState<Persona[]>([]);
   const [nichePersonaIds, setNichePersonaIds] = useState<number[]>([]);
+  const [toolbarNotice, setToolbarNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   
   // Right sidebar resizing
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(384); // w-96 = 24rem = 384px (original size)
@@ -278,6 +280,24 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isResizingRight]);
+
+  useEffect(() => {
+    return () => {
+      if (toolbarNoticeTimerRef.current) {
+        clearTimeout(toolbarNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showToolbarNotice = (text: string, type: 'success' | 'error' = 'success') => {
+    if (toolbarNoticeTimerRef.current) {
+      clearTimeout(toolbarNoticeTimerRef.current);
+    }
+    setToolbarNotice({ text, type });
+    toolbarNoticeTimerRef.current = setTimeout(() => {
+      setToolbarNotice(null);
+    }, 2600);
+  };
 
   useEffect(() => {
     const container = globeContainerRef.current;
@@ -719,6 +739,134 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     }
   };
 
+  const buildSessionUpdatePayload = () => ({
+    analysisState: {
+      niche: nicheInfo?.nicheDescription || '',
+      nicheExtracted: selectedUsers.length > 0,
+      selectedUsers,
+      opinions: reactions,
+      metrics,
+      globeDots,
+      reactions,
+      insights,
+      nicheInfo,
+      nichePersonaIds,
+      audienceConstraints,
+      marketRecommendation,
+    },
+    uiState: {
+      viewMode,
+      simulationType: selectedType || 'project-idea',
+      processedPersonas,
+      currentProcessingStep
+    }
+  });
+
+  const handleManualSave = async () => {
+    if (!currentSession) {
+      showToolbarNotice('No active session to save', 'error');
+      return;
+    }
+
+    try {
+      await updateSession(buildSessionUpdatePayload());
+      showToolbarNotice('Session saved');
+    } catch (error) {
+      console.error('Manual save failed:', error);
+      showToolbarNotice('Save failed. Please retry.', 'error');
+    }
+  };
+
+  const handleShareSession = async () => {
+    const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
+    if (!shareUrl) {
+      showToolbarNotice('Unable to get page URL', 'error');
+      return;
+    }
+
+    const shareTitle = `${project?.name || 'MarketLens'} Simulation`;
+    const shareText = currentPost
+      ? `MarketLens simulation: ${currentPost.substring(0, 120)}${currentPost.length > 120 ? '…' : ''}`
+      : 'MarketLens simulation link';
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
+        showToolbarNotice('Share menu opened');
+        return;
+      }
+    } catch (error) {
+      console.warn('Native share canceled or failed:', error);
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToolbarNotice('Link copied');
+    } catch (error) {
+      console.error('Clipboard copy failed:', error);
+      showToolbarNotice('Share failed. Copy URL manually.', 'error');
+    }
+  };
+
+  const handleExportSession = () => {
+    try {
+      const exportPayload = {
+        exportedAt: new Date().toISOString(),
+        project: {
+          id: project?._id || projectId || null,
+          name: project?.name || null,
+          description: project?.description || null,
+        },
+        session: {
+          id: currentSession?._id || null,
+          name: currentSession?.sessionName || 'Untitled Session',
+          prompt: currentPost || postContent || '',
+          hasUnsavedChanges,
+        },
+        metrics,
+        audienceConstraints,
+        marketRecommendation,
+        summary: {
+          totalPersonasLoaded: allUsers.length,
+          selectedUsers: selectedUsers.length,
+          reactions: reactions.length,
+          fullAttention: metrics.fullAttention,
+          partialAttention: metrics.partialAttention,
+          ignored: metrics.ignored,
+        },
+        reactions: reactions.map((reaction: any) => ({
+          personaId: reaction.personaId,
+          attention: reaction.attention,
+          reason: reaction.reason,
+          comment: reaction.comment || '',
+          sentiment: reaction.sentiment,
+          title: reaction.persona?.title || reaction.title || '',
+          location:
+            reaction.persona?.location
+              ? `${reaction.persona.location.city}, ${reaction.persona.location.country}`
+              : '',
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const safeName = (project?.name || 'marketlens').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      anchor.href = url;
+      anchor.download = `${safeName || 'marketlens'}-session-export-${stamp}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      showToolbarNotice('Export downloaded');
+    } catch (error) {
+      console.error('Export failed:', error);
+      showToolbarNotice('Export failed', 'error');
+    }
+  };
+
   // Auto-save functionality with debouncing
   const scheduleAutoSave = () => {
     if (autoSaveTimerRef.current) {
@@ -728,28 +876,7 @@ export function SimulationDashboard({ user, projectId }: { user: any; projectId?
     autoSaveTimerRef.current = setTimeout(async () => {
       if (currentSession && hasUnsavedChanges) {
         try {
-          await updateSession({
-            analysisState: {
-              niche: nicheInfo?.nicheDescription || '',
-              nicheExtracted: selectedUsers.length > 0,
-              selectedUsers,
-              opinions: reactions,
-              metrics,
-              globeDots,
-              reactions,
-              insights,
-              nicheInfo,
-              nichePersonaIds,
-              audienceConstraints,
-              marketRecommendation,
-            },
-            uiState: {
-              viewMode,
-              simulationType: selectedType || 'project-idea',
-              processedPersonas,
-              currentProcessingStep
-            }
-          });
+          await updateSession(buildSessionUpdatePayload());
         } catch (error) {
           console.error('Auto-save failed:', error);
         }
@@ -3208,10 +3335,21 @@ Return only the improved idea, no additional commentary.`,
           subtitle={project?.description || "AI agents for simulated market research"}
           actions={
             <>
+              {toolbarNotice && (
+                <div
+                  className={`text-[11px] px-2 py-1 border ${
+                    toolbarNotice.type === 'error'
+                      ? 'text-red-300 border-red-500/30 bg-red-500/10'
+                      : 'text-white/80 border-white/15 bg-white/5'
+                  }`}
+                >
+                  {toolbarNotice.text}
+                </div>
+              )}
               <Button
                 variant="ghost"
                 className="text-xs hover:bg-white/5 border border-white/15"
-                onClick={() => {}}
+                onClick={handleShareSession}
               >
                 <Share2 className="h-3 w-3 mr-2" />
                 Share
@@ -3219,7 +3357,7 @@ Return only the improved idea, no additional commentary.`,
               <Button
                 variant="ghost"
                 className="text-xs hover:bg-white/5 border border-white/15"
-                onClick={() => {}}
+                onClick={handleExportSession}
               >
                 <FileText className="h-3 w-3 mr-2" />
                 Export
@@ -3227,7 +3365,7 @@ Return only the improved idea, no additional commentary.`,
               <Button
                 variant="ghost"
                 className="text-xs hover:bg-white/5 border border-white/15"
-                onClick={() => scheduleAutoSave()}
+                onClick={handleManualSave}
               >
                 <Save className="h-3 w-3 mr-2" />
                 Save
