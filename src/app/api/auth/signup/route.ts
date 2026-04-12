@@ -46,51 +46,59 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // The trigger handle_new_user() will automatically create the user record
-    // Wait a moment for the trigger to execute
-    await new Promise(resolve => setTimeout(resolve, 100));
+    console.log('🔐 Auth user created:', authData.user.id, authData.user.email);
 
-    // Fetch the user record created by the trigger
+    // Create or fetch user record
     let user = null;
+    const defaultName = name.trim() || authData.user.email!.split('@')[0];
+
     try {
-      const { data: userData, error: userError } = await supabaseAdmin
+      // Try to fetch existing user first
+      const { data: existingUser, error: fetchError } = await supabaseAdmin
         .from('users')
         .select('*')
         .eq('id', authData.user.id)
         .single();
 
-      if (userError) {
-        console.error('⚠️ Error fetching user record:', userError);
-        // If trigger didn't work, create manually
-        if (userError.code === 'PGRST116') {
-          console.log('📝 Trigger may not have fired, creating user manually');
-          const { data: newUser, error: createError } = await supabaseAdmin
-            .from('users')
-            .insert({
-              id: authData.user.id,
-              email: authData.user.email!,
-              name: name.trim()
-            })
-            .select()
-            .single();
+      if (!fetchError && existingUser) {
+        user = existingUser;
+        console.log('✅ User already exists:', user.email);
+      } else if (fetchError?.code === 'PGRST116') {
+        // User doesn't exist, create them
+        console.log('📝 Creating new user record...');
+        const { data: newUser, error: createError } = await supabaseAdmin
+          .from('users')
+          .insert([{
+            id: authData.user.id,
+            email: authData.user.email!,
+            name: defaultName
+          }])
+          .select()
+          .single();
 
-          if (!createError) {
-            user = newUser;
-          } else if (createError.code === '23505') {
-            // User exists, fetch it
-            const { data: existingUser } = await supabaseAdmin
+        if (createError) {
+          console.error('❌ Error creating user:', createError);
+          if (createError.code === '23505') {
+            const { data: dupUser } = await supabaseAdmin
               .from('users')
               .select('*')
               .eq('id', authData.user.id)
               .single();
-            user = existingUser;
+            user = dupUser || null;
           }
+        } else {
+          user = newUser;
+          console.log('✅ User created:', newUser?.email);
         }
       } else {
-        user = userData;
+        console.error('❌ Unexpected fetch error:', fetchError);
       }
     } catch (error) {
-      console.error('Error fetching user:', error);
+      console.error('❌ Error in user creation logic:', error);
+    }
+
+    if (!user) {
+      console.warn('⚠️ User record not created but auth succeeded - using auth data');
     }
 
     console.log('✅ User signed up successfully:', authData.user.email);
@@ -103,7 +111,7 @@ export async function POST(request: NextRequest) {
         sub: authData.user.id,
         user_id: authData.user.id,
         email: authData.user.email,
-        name: user?.name || name.trim(),
+        name: user?.name || defaultName,
         picture: `https://avatar.vercel.sh/${authData.user.email}`,
         email_verified: authData.user.email_confirmed_at !== null
       },
@@ -115,6 +123,7 @@ export async function POST(request: NextRequest) {
       })
     };
 
+    console.log('📤 Signup response:', responseData.success);
     return NextResponse.json(responseData);
 
   } catch (error: any) {

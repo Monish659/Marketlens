@@ -54,10 +54,13 @@ CREATE INDEX IF NOT EXISTS idx_analysis_sessions_user_id ON analysis_sessions(us
 CREATE INDEX IF NOT EXISTS idx_persona_reactions_session_id ON persona_reactions(session_id);
 CREATE INDEX IF NOT EXISTS idx_persona_reactions_user_id ON persona_reactions(user_id);
 
--- Enable Row Level Security
+-- Enable Row Level Security (NOT on users table - needs to be writable during signup)
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analysis_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE persona_reactions ENABLE ROW LEVEL SECURITY;
+
+-- Disable RLS on users table so signup/login can write to it
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 
 -- Create RLS policies for user isolation
 CREATE POLICY "Users can only see their own projects" ON projects
