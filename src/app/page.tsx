@@ -53,19 +53,19 @@ export default function Landing() {
         <div className="absolute inset-0 z-[1] opacity-100">
           <PrismaticBurst
             animationType="rotate3d"
-            intensity={0.88}
-            speed={0.24}
-            distort={0}
+            intensity={1.35}
+            speed={0.22}
+            distort={0.12}
             paused={false}
             offset={{ x: 0, y: 0 }}
             hoverDampness={0.15}
             rayCount={0}
-            mixBlendMode="lighten"
-            colors={["#ffffff", "#f2f2f2", "#cfcfcf", "#8f8f8f"]}
+            mixBlendMode="screen"
+            colors={["#ffffff", "#ffffff", "#efefef", "#d8d8d8"]}
           />
         </div>
         <div
-          className="absolute inset-0 z-[2] opacity-[0.04]"
+          className="absolute inset-0 z-[2] opacity-[0.02]"
           style={{
             backgroundImage: "url('/final.gif')",
             backgroundSize: "cover",
@@ -74,7 +74,7 @@ export default function Landing() {
             backgroundBlendMode: "screen",
           }}
         />
-        <div className="absolute inset-0 z-[3] bg-black/14" />
+        <div className="absolute inset-0 z-[3] bg-black/8" />
         <nav className="relative z-10 flex items-center py-6 px-8 w-full mx-auto bg-black/50">
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -109,7 +109,7 @@ export default function Landing() {
             className="absolute inset-0 z-5"
             style={{
               background:
-                "radial-gradient(circle at center, rgba(0,0,0,0.58) 0%, rgba(0,0,0,0.32) 42%, rgba(0,0,0,0.12) 72%, transparent 100%)",
+                "radial-gradient(circle at center, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.2) 42%, rgba(0,0,0,0.06) 72%, transparent 100%)",
             }}
           ></div>
 
