@@ -1,52 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import * as bcrypt from 'bcryptjs';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, password } = body;
+    const { email, password } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
     }
 
-    // STEP 1: Authenticate with Supabase
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({
-      email,
-      password
-    });
+    // Fetch user from database
+    const { data: user, error: fetchError } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    if (error || !data.user || !data.session) {
-      return NextResponse.json({ error: error?.message || 'Login failed' }, { status: 401 });
+    if (fetchError || !user) {
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
-    // STEP 2: Try to create/fetch user record (non-critical)
-    try {
-      const { data: user } = await supabaseAdmin
-        .from('users')
-        .select('*')
-        .eq('id', data.user.id)
-        .single();
-
-      if (!user) {
-        await supabaseAdmin
-          .from('users')
-          .insert({ id: data.user.id, email, name: email.split('@')[0] })
-          .select()
-          .single();
-      }
-    } catch (e) {
-      console.warn('User record sync failed (non-fatal):', e);
+    // Compare passwords
+    const passwordMatch = await bcrypt.compare(password, user.password_hash || '');
+    if (!passwordMatch) {
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
-    // STEP 3: Always return success
+    // Generate token
+    const token = Buffer.from(JSON.stringify({ id: user.id, email: user.email })).toString('base64');
+
     return NextResponse.json({
-      access_token: data.session.access_token,
+      success: true,
       user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: data.user.user_metadata?.name || email.split('@')[0]
-      }
+        id: user.id,
+        email: user.email,
+        name: user.name
+      },
+      access_token: token
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 });

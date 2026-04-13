@@ -1,48 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import * as bcrypt from 'bcryptjs';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, password, name } = body;
+    const { email, password, name } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
     }
 
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const userId = crypto.randomUUID();
     const displayName = name || email.split('@')[0];
 
-    // STEP 1: Create auth user ONLY
-    const { data, error } = await supabaseAdmin.auth.signUp({
-      email,
-      password,
-      options: { data: { name: displayName } }
-    });
+    // Create user in database
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .insert({
+        id: userId,
+        email,
+        name: displayName,
+        password_hash: hashedPassword
+      })
+      .select()
+      .single();
 
-    if (error || !data.user) {
-      return NextResponse.json({ error: error?.message || 'Signup failed' }, { status: 400 });
+    if (error) {
+      if (error.code === '23505') {
+        return NextResponse.json({ error: 'Email already exists' }, { status: 400 });
+      }
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    // STEP 2: Try to create database record but DON'T FAIL if it errors
-    try {
-      await supabaseAdmin
-        .from('users')
-        .insert({ id: data.user.id, email, name: displayName })
-        .select()
-        .single();
-    } catch (e) {
-      console.warn('DB record creation failed (non-fatal):', e);
-    }
+    // Generate token
+    const token = Buffer.from(JSON.stringify({ id: user.id, email: user.email })).toString('base64');
 
-    // STEP 3: Always return success with user data
     return NextResponse.json({
       success: true,
       user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: displayName
+        id: user.id,
+        email: user.email,
+        name: user.name
       },
-      session: data.session || null
+      access_token: token
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 });
