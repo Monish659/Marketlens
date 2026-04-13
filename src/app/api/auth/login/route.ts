@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
-import * as bcrypt from 'bcryptjs';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const usersFile = path.join(process.cwd(), 'users.json');
+
+function hashPassword(password: string): string {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function readUsers() {
+  try {
+    const data = fs.readFileSync(usersFile, 'utf-8');
+    return JSON.parse(data).users || [];
+  } catch {
+    return [];
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,34 +26,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
     }
 
-    // Fetch user from database
-    const { data: user, error: fetchError } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+    const users = readUsers();
+    const user = users.find((u: any) => u.email === email);
 
-    if (fetchError || !user) {
+    if (!user || user.password !== hashPassword(password)) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
-
-    // Compare passwords
-    const passwordMatch = await bcrypt.compare(password, user.password_hash || '');
-    if (!passwordMatch) {
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
-    }
-
-    // Generate token
-    const token = Buffer.from(JSON.stringify({ id: user.id, email: user.email })).toString('base64');
 
     return NextResponse.json({
       success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name
-      },
-      access_token: token
+      user: { id: user.id, email: user.email, name: user.name },
+      token: Buffer.from(JSON.stringify({ id: user.id, email: user.email })).toString('base64')
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 });
