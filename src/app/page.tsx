@@ -83,10 +83,10 @@ export default function Landing() {
 
           <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
             <button
-              onClick={() => router.push("/login")}
+              onClick={() => router.push("/dashboard")}
               className="px-4 py-2 hover:bg-white/20 bg-white/5 text-xs text-white font-mono transition cursor-pointer"
             >
-              Login ↗
+              Enter App ↗
             </button>
           </div>
         </nav>
@@ -161,7 +161,7 @@ export default function Landing() {
               <Button
                 size="lg"
                 className="font-mono text-sm px-8 py-3 cursor-pointer bg-white text-black hover:bg-white/90 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
-                onClick={() => router.push("/login")}
+                onClick={() => router.push("/dashboard")}
               >
                 Explore MarketLens
                 <ArrowUpRightIcon className="ml-2 h-4 w-4" />

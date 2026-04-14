@@ -14,12 +14,16 @@ function DashboardContent() {
 
   useEffect(() => {
     const userData = localStorage.getItem('user_data')
-    const tokens = localStorage.getItem('auth_tokens')
     
-    if (!userData || !tokens) {
-      // No authentication found, redirect to login
-      router.push('/login')
-      return
+    // Create mock user if not exists
+    if (!userData) {
+      const mockUser = {
+        id: 'user_' + Math.random().toString(36).substring(7),
+        email: 'user@marketlens.local',
+        name: 'MarketLens User'
+      }
+      localStorage.setItem('user_data', JSON.stringify(mockUser))
+      setUser(mockUser)
     }
 
     try {
