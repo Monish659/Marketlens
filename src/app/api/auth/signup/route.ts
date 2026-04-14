@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 
 const usersFile = path.join(process.cwd(), 'users.json');
 
 function hashPassword(password: string): string {
-  const crypto = require('crypto');
-  return crypto.createHash('sha256').update(password).digest('hex');
+  return createHash('sha256').update(password).digest('hex');
 }
 
 function readUsers() {
